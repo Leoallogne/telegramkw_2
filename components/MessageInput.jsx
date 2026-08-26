@@ -1,42 +1,77 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, AlertCircle } from 'lucide-react';
+import { Send, Loader2, AlertCircle, Paperclip, X, FileText, Image as ImageIcon } from 'lucide-react';
+import { supabase } from '@/lib/supabaseClient';
 
-// ─── Security: Strip dangerous HTML/script patterns from message input ──────
 function sanitizeInput(str) {
   return str
-    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')  // strip <script> tags
-    .replace(/<[^>]*>/g, '')                                // strip all HTML tags
-    .replace(/javascript:/gi, '')                           // strip js: protocol
-    .replace(/on\w+\s*=/gi, '')                             // strip event handlers
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/javascript:/gi, '')
+    .replace(/on\w+\s*=/gi, '')
     .trim();
 }
 
 const MAX_MESSAGE_LENGTH = 2000;
-const RATE_LIMIT_MS = 500; // minimum ms between sends
+const RATE_LIMIT_MS = 500;
+const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 
 export default function MessageInput({ onSendMessage, onTypingChange, disabled }) {
   const [text, setText] = useState('');
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [filePreviewUrl, setFilePreviewUrl] = useState(null);
   const [isSending, setIsSending] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [rateLimited, setRateLimited] = useState(false);
   const [validationError, setValidationError] = useState('');
 
   const inputRef = useRef(null);
+  const fileInputRef = useRef(null);
   const typingTimeoutRef = useRef(null);
-  const lastSentAtRef = useRef(0); // timestamp of last send for rate limiting
+  const lastSentAtRef = useRef(0);
 
   useEffect(() => {
     return () => {
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      if (filePreviewUrl) URL.revokeObjectURL(filePreviewUrl);
     };
-  }, []);
+  }, [filePreviewUrl]);
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      setValidationError('Ukuran file terlalu besar. Maksimal 10MB.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    setValidationError('');
+    setSelectedFile(file);
+
+    if (file.type.startsWith('image/')) {
+      const preview = URL.createObjectURL(file);
+      setFilePreviewUrl(preview);
+    } else {
+      setFilePreviewUrl(null);
+    }
+  };
+
+  const removeSelectedFile = () => {
+    setSelectedFile(null);
+    if (filePreviewUrl) {
+      URL.revokeObjectURL(filePreviewUrl);
+      setFilePreviewUrl(null);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   const handleTextChange = useCallback((e) => {
     const raw = e.target.value;
 
-    // Enforce max character limit
     if (raw.length > MAX_MESSAGE_LENGTH) {
       setValidationError(`Pesan terlalu panjang. Maksimal ${MAX_MESSAGE_LENGTH} karakter.`);
       return;
@@ -45,7 +80,6 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled }
     setValidationError('');
     setText(raw);
 
-    // Typing indicator broadcast
     if (onTypingChange) {
       if (!isTyping && raw.trim().length > 0) {
         setIsTyping(true);
@@ -61,16 +95,36 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled }
     }
   }, [isTyping, onTypingChange]);
 
+  const uploadAttachment = async (file) => {
+    const fileExt = file.name.split('.').pop();
+    const cleanName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const fileName = `${Date.now()}_${cleanName}`;
+    const filePath = `chat-attachments/${fileName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('chat-attachments')
+      .upload(filePath, file, { cacheControl: '3600', upsert: false });
+
+    if (uploadError) throw uploadError;
+
+    const { data: publicUrlData } = supabase.storage
+      .from('chat-attachments')
+      .getPublicUrl(filePath);
+
+    return {
+      publicUrl: publicUrlData.publicUrl,
+      isImage: file.type.startsWith('image/'),
+      originalName: file.name
+    };
+  };
+
   const handleSubmit = useCallback(async (e) => {
     e.preventDefault();
 
     const trimmed = text.trim();
+    if (!trimmed && !selectedFile) return;
+    if (disabled || isSending || isUploading) return;
 
-    // ─── Validation ────────────────────────────────────────────────
-    if (!trimmed) return;
-    if (disabled || isSending) return;
-
-    // Rate limit: prevent sending more than once per RATE_LIMIT_MS
     const now = Date.now();
     if (now - lastSentAtRef.current < RATE_LIMIT_MS) {
       setRateLimited(true);
@@ -78,22 +132,15 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled }
       return;
     }
 
-    // ─── Sanitization ──────────────────────────────────────────────
     const sanitized = sanitizeInput(trimmed);
-    if (!sanitized) {
-      setValidationError('Pesan tidak valid atau mengandung konten berbahaya.');
-      return;
-    }
     if (sanitized.length > MAX_MESSAGE_LENGTH) {
       setValidationError(`Pesan terlalu panjang. Maksimal ${MAX_MESSAGE_LENGTH} karakter.`);
       return;
     }
 
-    // ─── Send ──────────────────────────────────────────────────────
     lastSentAtRef.current = now;
     setValidationError('');
 
-    // Stop typing indicator immediately on send
     if (isTyping && onTypingChange) {
       setIsTyping(false);
       onTypingChange(false);
@@ -102,23 +149,80 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled }
 
     setIsSending(true);
     try {
-      await onSendMessage(sanitized);
+      let finalContent = sanitized;
+
+      // Handle attachment upload if file is selected
+      if (selectedFile) {
+        setIsUploading(true);
+        const attachment = await uploadAttachment(selectedFile);
+        
+        let attachmentMarker = '';
+        if (attachment.isImage) {
+          attachmentMarker = `[image:${attachment.publicUrl}]`;
+        } else {
+          attachmentMarker = `[file:${attachment.originalName}|${attachment.publicUrl}]`;
+        }
+
+        finalContent = finalContent 
+          ? `${finalContent}\n${attachmentMarker}` 
+          : attachmentMarker;
+      }
+
+      await onSendMessage(finalContent);
+      
+      // Clear inputs
       setText('');
+      removeSelectedFile();
       inputRef.current?.focus();
     } catch (err) {
-      console.error('Failed to send message:', err);
-      setValidationError('Gagal mengirim pesan. Silakan coba lagi.');
+      console.error('Failed to send message/attachment:', err);
+      setValidationError('Gagal mengirim pesan atau lampiran.');
     } finally {
       setIsSending(false);
+      setIsUploading(false);
     }
-  }, [text, disabled, isSending, isTyping, onTypingChange, onSendMessage]);
+  }, [text, selectedFile, disabled, isSending, isUploading, isTyping, onTypingChange, onSendMessage]);
 
   const charsLeft = MAX_MESSAGE_LENGTH - text.length;
   const isOverLimit = text.length > MAX_MESSAGE_LENGTH;
-  const isDisabled = disabled || isSending || rateLimited || isOverLimit;
+  const isDisabled = disabled || isSending || isUploading || rateLimited || isOverLimit || (!text.trim() && !selectedFile);
 
   return (
     <div className="border-t border-white/5 bg-slate-900/60 backdrop-blur-md">
+      {/* File Preview Bar */}
+      {selectedFile && (
+        <div className="flex items-center justify-between px-4 pt-3 pb-1 border-b border-white/5 bg-slate-950/40">
+          <div className="flex items-center gap-3 overflow-hidden">
+            {filePreviewUrl ? (
+              <img
+                src={filePreviewUrl}
+                alt="Preview"
+                className="h-10 w-10 rounded-lg object-cover border border-violet-500/30"
+              />
+            ) : (
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-violet-600/20 text-violet-400 border border-violet-500/30">
+                <FileText className="h-5 w-5" />
+              </div>
+            )}
+            <div className="overflow-hidden text-xs">
+              <p className="truncate font-semibold text-slate-200">{selectedFile.name}</p>
+              <p className="text-[10px] text-slate-500">
+                {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={removeSelectedFile}
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-rose-400 transition-colors"
+            title="Batal lampiran"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+
       {/* Validation / Rate limit error banner */}
       {(validationError || rateLimited) && (
         <div className="flex items-center gap-2 px-4 pt-2 text-xs text-amber-400">
@@ -128,6 +232,27 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled }
       )}
 
       <form onSubmit={handleSubmit} className="flex items-center gap-2 p-4">
+        {/* Hidden File Input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*,.pdf,.docx,.txt,.zip"
+          onChange={handleFileSelect}
+          className="hidden"
+        />
+
+        {/* Attach File Button */}
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={disabled || isSending || isUploading}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-slate-950/60 text-slate-400 hover:bg-slate-800 hover:text-violet-400 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Lampirkan File / Gambar"
+        >
+          <Paperclip className="h-5 w-5" />
+        </button>
+
+        {/* Text Input */}
         <div className="relative flex-1">
           <input
             ref={inputRef}
@@ -139,16 +264,15 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled }
                 handleSubmit(e);
               }
             }}
-            placeholder="Tulis pesan..."
-            disabled={disabled || isSending}
-            maxLength={MAX_MESSAGE_LENGTH + 1} // allow 1 over so we can show the error
+            placeholder={selectedFile ? 'Tambah keterangan (opsional)...' : 'Tulis pesan...'}
+            disabled={disabled || isSending || isUploading}
+            maxLength={MAX_MESSAGE_LENGTH + 1}
             className={`w-full rounded-xl border bg-slate-950/60 px-4 py-3 text-sm text-slate-200 placeholder-slate-500 outline-none transition-all duration-200 focus:ring-1 disabled:cursor-not-allowed disabled:opacity-50 ${
               isOverLimit
                 ? 'border-rose-500 focus:border-rose-500 focus:ring-rose-500/20'
                 : 'border-white/10 focus:border-violet-500 focus:ring-violet-500/20'
             }`}
           />
-          {/* Character counter — only shows when approaching limit */}
           {text.length > MAX_MESSAGE_LENGTH * 0.8 && (
             <span
               className={`absolute bottom-2 right-3 text-[10px] select-none ${
@@ -160,13 +284,14 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled }
           )}
         </div>
 
+        {/* Send Button */}
         <button
           type="submit"
           disabled={isDisabled}
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 font-semibold text-white shadow-md shadow-indigo-600/20 transition-all duration-200 hover:scale-105 active:scale-95 disabled:scale-100 disabled:cursor-not-allowed disabled:from-slate-800 disabled:to-slate-800 disabled:text-slate-500 disabled:shadow-none"
-          title={rateLimited ? 'Terlalu cepat!' : 'Kirim Pesan'}
+          title="Kirim Pesan"
         >
-          {isSending ? (
+          {isSending || isUploading ? (
             <Loader2 className="h-5 w-5 animate-spin" />
           ) : (
             <Send className="h-4.5 w-4.5" />
