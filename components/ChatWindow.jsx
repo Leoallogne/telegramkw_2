@@ -1,0 +1,888 @@
+'use client';
+
+import React, { useState, useEffect, useRef } from 'react';
+import { supabase } from '@/lib/supabaseClient';
+import MessageBubble from './MessageBubble';
+import MessageInput from './MessageInput';
+import { LogOut, MessageSquare, Menu, X, Shield, RefreshCw, Users, Eye, EyeOff, Trash2, AlertTriangle, WifiOff, KeyRound, Check } from 'lucide-react';
+
+export default function ChatWindow({ currentUser, onLogout }) {
+  const [role, setRole] = useState('guest');
+  const [adminProfile, setAdminProfile] = useState(null);
+  
+  // Admin dashboard state
+  const [guests, setGuests] = useState([]);
+  const [selectedGuest, setSelectedGuest] = useState(null);
+  const [unreadGuests, setUnreadGuests] = useState({});
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  // Admin User Management Modal state
+  const [showUserModal, setShowUserModal] = useState(false);
+  const [allUsers, setAllUsers] = useState([]);
+  const [deletingUser, setDeletingUser] = useState(null);
+  const [resetPasswords, setResetPasswords] = useState({}); // { userId: string }
+  const [resettingUser, setResettingUser] = useState(null);
+  const [resetSuccess, setResetSuccess] = useState({}); // { userId: boolean }
+
+  // Offline status state
+  const [isOffline, setIsOffline] = useState(typeof window !== 'undefined' ? !navigator.onLine : false);
+
+  // Real-time Typing Status state
+  const [typingUsers, setTypingUsers] = useState({}); // { userId: boolean }
+
+  // General Chat state
+  const [messages, setMessages] = useState([]);
+  const [profilesMap, setProfilesMap] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const messagesEndRef = useRef(null);
+  
+  // Refs to prevent stale closures in realtime events
+  const selectedGuestRef = useRef(selectedGuest);
+  selectedGuestRef.current = selectedGuest;
+  const adminProfileRef = useRef(adminProfile);
+  adminProfileRef.current = adminProfile;
+  const roleRef = useRef(role);
+  roleRef.current = role;
+  const channelRef = useRef(null);
+
+  // Close sidebar by default on mobile devices on mount
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      setIsSidebarOpen(false);
+    }
+  }, []);
+
+  // Monitor online/offline status
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', handleOnline);
+      window.addEventListener('offline', handleOffline);
+    }
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', handleOnline);
+        window.removeEventListener('offline', handleOffline);
+      }
+    };
+  }, []);
+
+  // 1. Fetch user role and profiles
+  useEffect(() => {
+    const initializeChat = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const { data: myProfile, error: myProfileErr } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', currentUser.id)
+          .single();
+
+        if (myProfileErr) throw myProfileErr;
+        
+        const userRole = myProfile.role || 'guest';
+        setRole(userRole);
+
+        setProfilesMap((prev) => ({
+          ...prev,
+          [currentUser.id]: myProfile.username,
+        }));
+
+        if (userRole === 'admin') {
+          await loadAdminDashboard();
+        } else {
+          const { data: adminData, error: adminErr } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('role', 'admin')
+            .maybeSingle();
+
+          if (adminErr) throw adminErr;
+
+          if (adminData) {
+            setAdminProfile(adminData);
+            setProfilesMap((prev) => ({
+              ...prev,
+              [adminData.id]: adminData.username,
+            }));
+            await loadMessages(currentUser.id, adminData.id);
+            await markMessagesAsRead(adminData.id);
+          } else {
+            setAdminProfile(null);
+            setMessages([]);
+          }
+        }
+      } catch (err) {
+        console.error('Initialization error:', err);
+        setError('Gagal memuat konfigurasi chat.');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    initializeChat();
+  }, [currentUser]);
+
+  const loadAdminDashboard = async () => {
+    try {
+      const { data: guestProfiles, error: guestErr } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('role', 'guest')
+        .order('created_at', { ascending: false });
+
+      if (guestErr) throw guestErr;
+
+      setGuests(guestProfiles || []);
+
+      const map = { [currentUser.id]: 'Admin' };
+      guestProfiles?.forEach((g) => {
+        map[g.id] = g.username;
+      });
+      setProfilesMap(map);
+    } catch (err) {
+      console.error('Error loading admin dashboard:', err);
+    }
+  };
+
+  const loadMessages = async (userId1, userId2) => {
+    if (!userId1 || !userId2) return;
+    try {
+      const { data, error: msgErr } = await supabase
+        .from('messages')
+        .select('*')
+        .or(
+          `and(sender_id.eq.${userId1},receiver_id.eq.${userId2}),and(sender_id.eq.${userId2},receiver_id.eq.${userId1})`
+        )
+        .order('created_at', { ascending: true });
+
+      if (msgErr) throw msgErr;
+      setMessages(data || []);
+    } catch (err) {
+      console.error('Error loading messages:', err);
+    }
+  };
+
+  // Helper to mark messages as read
+  const markMessagesAsRead = async (partnerId) => {
+    if (!partnerId) return;
+    try {
+      const { error: updateErr } = await supabase
+        .from('messages')
+        .update({ is_read: true })
+        .eq('sender_id', partnerId)
+        .eq('receiver_id', currentUser.id)
+        .eq('is_read', false);
+
+      if (updateErr) throw updateErr;
+    } catch (err) {
+      console.warn('Could not mark messages as read:', err.message);
+    }
+  };
+
+  const profilesMapRef = useRef(profilesMap);
+  useEffect(() => {
+    profilesMapRef.current = profilesMap;
+  }, [profilesMap]);
+
+  // Request browser notification permission
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'default') {
+        Notification.requestPermission();
+      }
+    }
+  }, []);
+
+  // Notification trigger helper
+  const triggerNotification = (senderId, content) => {
+    if (
+      typeof window !== 'undefined' &&
+      'Notification' in window &&
+      Notification.permission === 'granted'
+    ) {
+      if (document.hidden || !document.hasFocus()) {
+        const senderName = profilesMapRef.current[senderId] || 'User';
+        const title = `Pesan dari ${senderName}`;
+        const options = {
+          body: content,
+          icon: '/favicon.ico',
+          tag: 'guest-admin-chat',
+          renotify: true,
+        };
+
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.ready
+            .then((reg) => {
+              reg.showNotification(title, options);
+            })
+            .catch(() => {
+              new Notification(title, options);
+            });
+        } else {
+          new Notification(title, options);
+        }
+      }
+    }
+  };
+
+  // 2. Realtime Messages & Broadcast Subscription Setup
+  useEffect(() => {
+    if (!currentUser || loading) return;
+
+    const channel = supabase
+      .channel('messages-room-channel')
+      
+      // Listen to new messages
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages' },
+        async (payload) => {
+          const newMsg = payload.new;
+
+          if (roleRef.current === 'guest') {
+            const adminData = adminProfileRef.current;
+            if (adminData) {
+              const isAdminMsg = newMsg.sender_id === adminData.id && newMsg.receiver_id === currentUser.id;
+              const isOwnMsg = newMsg.sender_id === currentUser.id && newMsg.receiver_id === adminData.id;
+              
+              if (isAdminMsg || isOwnMsg) {
+                setMessages((prev) => {
+                  if (prev.some((m) => m.id === newMsg.id)) return prev;
+                  return [...prev, newMsg];
+                });
+
+                if (isAdminMsg) {
+                  await markMessagesAsRead(adminData.id);
+                  triggerNotification(newMsg.sender_id, newMsg.content);
+                }
+              }
+            }
+          } else {
+            const activeGuest = selectedGuestRef.current;
+            const isFromActiveGuest = newMsg.sender_id === activeGuest?.id && newMsg.receiver_id === currentUser.id;
+            const isToActiveGuest = newMsg.sender_id === currentUser.id && newMsg.receiver_id === activeGuest?.id;
+
+            if (isFromActiveGuest || isToActiveGuest) {
+              setMessages((prev) => {
+                if (prev.some((m) => m.id === newMsg.id)) return prev;
+                return [...prev, newMsg];
+              });
+              
+              if (isFromActiveGuest) {
+                await markMessagesAsRead(activeGuest.id);
+              }
+            }
+
+            if (newMsg.sender_id !== currentUser.id) {
+              setGuests((prevGuests) => {
+                const exists = prevGuests.some((g) => g.id === newMsg.sender_id);
+                if (exists) {
+                  const sender = prevGuests.find((g) => g.id === newMsg.sender_id);
+                  const rest = prevGuests.filter((g) => g.id !== newMsg.sender_id);
+                  return [sender, ...rest];
+                } else {
+                  fetchGuestProfile(newMsg.sender_id);
+                  return prevGuests;
+                }
+              });
+
+              if (!activeGuest || activeGuest.id !== newMsg.sender_id) {
+                setUnreadGuests((prev) => ({
+                  ...prev,
+                  [newMsg.sender_id]: true,
+                }));
+              }
+
+              triggerNotification(newMsg.sender_id, newMsg.content);
+            }
+          }
+        }
+      )
+      
+      // Listen to message updates (for ticks / read status updates)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'messages' },
+        (payload) => {
+          const updatedMsg = payload.new;
+          setMessages((prev) =>
+            prev.map((m) => (m.id === updatedMsg.id ? updatedMsg : m))
+          );
+        }
+      )
+      
+      // Listen to Realtime Broadcast typing events
+      .on('broadcast', { event: 'typing' }, (payload) => {
+        const { userId, isTyping } = payload.payload;
+        setTypingUsers((prev) => ({
+          ...prev,
+          [userId]: isTyping,
+        }));
+      })
+      
+      .subscribe();
+
+    channelRef.current = channel;
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [currentUser, loading]);
+
+  const fetchGuestProfile = async (guestId) => {
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', guestId)
+        .single();
+      
+      if (data) {
+        setGuests((prev) => {
+          if (prev.some((g) => g.id === data.id)) return prev;
+          return [data, ...prev];
+        });
+        setProfilesMap((prev) => ({
+          ...prev,
+          [data.id]: data.username,
+        }));
+      }
+    } catch (e) {
+      console.error('Error fetching dynamic guest profile:', e);
+    }
+  };
+
+  // Scroll to bottom on new messages
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  const handleSelectGuest = async (guest) => {
+    setSelectedGuest(guest);
+    setUnreadGuests((prev) => ({
+      ...prev,
+      [guest.id]: false,
+    }));
+    await loadMessages(currentUser.id, guest.id);
+    await markMessagesAsRead(guest.id);
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      setIsSidebarOpen(false);
+    }
+  };
+
+  const handleSendMessage = async (content) => {
+    let receiverId = '';
+
+    if (role === 'guest') {
+      if (!adminProfile) {
+        const { data: freshAdmin } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('role', 'admin')
+          .maybeSingle();
+
+        if (freshAdmin) {
+          setAdminProfile(freshAdmin);
+          setProfilesMap((prev) => ({ ...prev, [freshAdmin.id]: freshAdmin.username }));
+          receiverId = freshAdmin.id;
+        } else {
+          alert('Admin belum tersedia. Silakan tunggu Admin melakukan setup.');
+          return;
+        }
+      } else {
+        receiverId = adminProfile.id;
+      }
+    } else {
+      if (!selectedGuest) return;
+      receiverId = selectedGuest.id;
+    }
+
+    try {
+      const { error: sendErr } = await supabase.from('messages').insert({
+        sender_id: currentUser.id,
+        receiver_id: receiverId,
+        content: content,
+        is_read: false
+      });
+
+      if (sendErr) throw sendErr;
+    } catch (err) {
+      console.error('Send error:', err);
+      alert('Gagal mengirim pesan.');
+    }
+  };
+
+  // Broadcast typing status change
+  const handleTypingChange = (isTyping) => {
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: 'broadcast',
+        event: 'typing',
+        payload: { userId: currentUser.id, isTyping }
+      });
+    }
+  };
+
+  // ============================
+  // Admin User Management Logic
+  // ============================
+  const openUserManagement = async () => {
+    setShowUserModal(true);
+    setResetPasswords({});
+    setResetSuccess({});
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('role', 'guest')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setAllUsers(data || []);
+    } catch (err) {
+      console.error('Error fetching users:', err);
+    }
+  };
+
+  const handleResetPassword = async (userId) => {
+    const newPassword = resetPasswords[userId];
+    if (!newPassword || newPassword.trim().length < 6) {
+      alert('Password baru minimal 6 karakter!');
+      return;
+    }
+
+    setResettingUser(userId);
+    try {
+      const { error } = await supabase.rpc('reset_user_password', {
+        target_user_id: userId,
+        new_password: newPassword.trim(),
+      });
+
+      if (error) throw error;
+
+      setResetSuccess((prev) => ({ ...prev, [userId]: true }));
+      setResetPasswords((prev) => ({ ...prev, [userId]: '' }));
+
+      // Reset success status after 3 seconds
+      setTimeout(() => {
+        setResetSuccess((prev) => ({ ...prev, [userId]: false }));
+      }, 3000);
+    } catch (err) {
+      console.error('Reset password error:', err);
+      alert('Gagal me-reset password: ' + err.message);
+    } finally {
+      setResettingUser(null);
+    }
+  };
+
+  const handleDeleteUser = async (userId) => {
+    if (!confirm('Apakah Anda yakin ingin menghapus user ini? Semua pesan mereka akan ikut terhapus.')) return;
+
+    setDeletingUser(userId);
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .delete()
+        .eq('id', userId);
+
+      if (error) throw error;
+
+      setAllUsers((prev) => prev.filter((u) => u.id !== userId));
+      setGuests((prev) => prev.filter((g) => g.id !== userId));
+      
+      if (selectedGuest?.id === userId) {
+        setSelectedGuest(null);
+        setMessages([]);
+      }
+    } catch (err) {
+      console.error('Error deleting user:', err);
+      alert('Gagal menghapus user: ' + err.message);
+    } finally {
+      setDeletingUser(null);
+    }
+  };
+
+  const formatDate = (isoString) => {
+    if (!isoString) return '-';
+    try {
+      return new Date(isoString).toLocaleDateString('id-ID', {
+        day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+      });
+    } catch {
+      return '-';
+    }
+  };
+
+  // Check if active chat room partner is typing
+  const activeChatPartnerId = role === 'admin' ? selectedGuest?.id : adminProfile?.id;
+  const isPartnerTyping = activeChatPartnerId && typingUsers[activeChatPartnerId];
+
+  // ============================
+  // RENDER
+  // ============================
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[100dvh] flex-col items-center justify-center bg-slate-950 text-slate-200">
+        <RefreshCw className="h-8 w-8 animate-spin text-violet-500 mb-4" />
+        <p className="text-sm text-slate-400 animate-pulse">Memuat sesi real-time...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-[100dvh] w-screen overflow-hidden bg-slate-950 font-sans text-slate-200">
+      
+      {/* Sidebar Backdrop Overlay for Mobile */}
+      {isSidebarOpen && role === 'admin' && (
+        <div
+          onClick={() => setIsSidebarOpen(false)}
+          className="fixed inset-0 z-10 bg-black/60 backdrop-blur-sm transition-opacity duration-300 md:hidden"
+        />
+      )}
+
+      {/* Sidebar for Admin */}
+      {role === 'admin' && (
+        <div
+          className={`fixed inset-y-0 left-0 z-20 flex w-72 shrink-0 flex-col border-r border-white/5 bg-slate-900 transition-transform duration-300 md:static md:translate-x-0 ${
+            isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+          }`}
+        >
+          {/* Sidebar Header */}
+          <div className="flex h-16 items-center justify-between border-b border-white/5 px-4 bg-slate-900/50">
+            <div className="flex items-center gap-2">
+              <Shield className="h-5 w-5 text-violet-500" />
+              <span className="font-bold tracking-wide text-sm bg-gradient-to-r from-violet-200 to-indigo-300 bg-clip-text text-transparent">Admin Dashboard</span>
+            </div>
+            <button
+              onClick={() => setIsSidebarOpen(false)}
+              className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white md:hidden"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          {/* Manage Users Button */}
+          <div className="p-3 border-b border-white/5">
+            <button
+              onClick={openUserManagement}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-violet-500/20 bg-violet-500/10 py-2.5 text-xs font-bold uppercase tracking-wider text-violet-400 hover:bg-violet-500/20 transition-all duration-200"
+            >
+              <Users className="h-4 w-4" />
+              Kelola User
+            </button>
+          </div>
+
+          {/* Guest List */}
+          <div className="flex-1 overflow-y-auto p-3 space-y-1">
+            <h3 className="px-2 mb-3 text-[10px] font-bold uppercase tracking-wider text-slate-500">Chat Aktif</h3>
+            {guests.length === 0 ? (
+              <div className="flex flex-col items-center justify-center p-8 text-center text-slate-600">
+                <MessageSquare className="h-8 w-8 mb-2 opacity-30" />
+                <p className="text-xs">Belum ada chat aktif</p>
+              </div>
+            ) : (
+              guests.map((g) => {
+                const isSelected = selectedGuest?.id === g.id;
+                const hasUnread = unreadGuests[g.id];
+                const isGuestTyping = typingUsers[g.id];
+                return (
+                  <button
+                    key={g.id}
+                    onClick={() => handleSelectGuest(g)}
+                    className={`relative flex w-full items-center gap-3 rounded-xl p-3 text-left transition-all duration-200 ${
+                      isSelected
+                        ? 'bg-gradient-to-r from-violet-600/30 to-indigo-600/20 border border-violet-500/20 text-white shadow-md'
+                        : 'bg-slate-900/30 border border-transparent hover:bg-slate-800/50 text-slate-300 hover:text-slate-100'
+                    }`}
+                  >
+                    <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-slate-800 to-slate-700 font-bold text-violet-400">
+                      {g.username.charAt(0).toUpperCase()}
+                      {hasUnread && (
+                        <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-3 w-3 bg-violet-500"></span>
+                        </span>
+                      )}
+                    </div>
+                    <div className="overflow-hidden flex-1 min-w-0">
+                      <p className="truncate text-sm font-semibold">{g.username}</p>
+                      <p className={`truncate text-[10px] ${isGuestTyping ? 'text-emerald-400 font-medium animate-pulse' : 'text-slate-500'}`}>
+                        {isGuestTyping ? 'sedang mengetik...' : 'Guest User'}
+                      </p>
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Main Chat Area */}
+      <div className="flex h-full flex-1 flex-col bg-slate-950 relative overflow-hidden">
+        
+        {/* Offline Banner Notification */}
+        {isOffline && (
+          <div className="sticky top-0 z-30 flex items-center justify-center gap-2 bg-rose-500/25 border-b border-rose-500/30 px-4 py-2 text-xs font-semibold text-rose-300 backdrop-blur-md animate-fade-in">
+            <WifiOff className="h-4 w-4 animate-bounce" />
+            <span>Koneksi Anda Terputus. Menunggu jaringan kembali...</span>
+          </div>
+        )}
+
+        {/* Chat Window Top Bar */}
+        <header className="flex h-16 shrink-0 items-center justify-between border-b border-white/5 bg-slate-900/40 px-4 md:px-6 backdrop-blur-md">
+          <div className="flex items-center gap-3">
+            {role === 'admin' && (
+              <button
+                onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                className="mr-1 rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white md:hidden"
+              >
+                <Menu className="h-5 w-5" />
+              </button>
+            )}
+
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-500 font-bold text-white shadow-md">
+              {role === 'admin' 
+                ? (selectedGuest ? selectedGuest.username.charAt(0).toUpperCase() : 'A')
+                : (adminProfile ? adminProfile.username.charAt(0).toUpperCase() : 'G')
+              }
+            </div>
+
+            <div>
+              <h2 className="text-sm font-bold text-slate-100">
+                {role === 'admin'
+                  ? (selectedGuest ? selectedGuest.username : 'Pilih Chat')
+                  : (adminProfile ? adminProfile.username : 'Support Admin')
+                }
+              </h2>
+              <p className="text-[10px] text-slate-400 flex items-center gap-1.5">
+                {isPartnerTyping ? (
+                  <span className="text-emerald-400 font-medium animate-pulse flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping"></span>
+                    sedang mengetik...
+                  </span>
+                ) : (
+                  <>
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    {role === 'admin' 
+                      ? (selectedGuest ? 'Guest User Online' : 'Dashboard Aktif')
+                      : (adminProfile ? 'Support Online' : 'Menunggu Admin...')
+                    }
+                  </>
+                )}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="hidden select-none rounded-full border border-violet-500/20 bg-violet-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-violet-400 md:inline-block">
+              {role === 'admin' ? 'Admin' : profilesMap[currentUser.id] || 'User'}
+            </span>
+            <button
+              onClick={onLogout}
+              className="flex items-center justify-center rounded-xl border border-white/5 bg-slate-900 hover:bg-rose-950/20 hover:border-rose-900/30 p-2.5 text-slate-400 hover:text-rose-400 transition-all duration-200"
+              title="Logout"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
+        </header>
+
+        {/* Viewport for messages */}
+        <div className="flex-1 overflow-y-auto px-4 md:px-6 py-4 scrollbar-thin">
+          {error && (
+            <div className="mx-auto my-4 max-w-md rounded-xl bg-rose-500/10 border border-rose-500/20 p-4 text-center text-xs text-rose-300">
+              {error}
+            </div>
+          )}
+
+          {role === 'admin' && !selectedGuest ? (
+            <div className="flex h-full flex-col items-center justify-center text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-900 text-slate-600">
+                <MessageSquare className="h-8 w-8" />
+              </div>
+              <h3 className="text-base font-bold text-slate-300">Belum Ada Chat Dipilih</h3>
+              <p className="mt-1 max-w-xs text-xs text-slate-500">
+                Pilih guest dari sidebar kiri untuk mulai membaca dan membalas pesan.
+              </p>
+            </div>
+          ) : (
+            <>
+              {messages.length === 0 ? (
+                <div className="flex h-full flex-col items-center justify-center text-center text-slate-600">
+                  <p className="text-xs">Belum ada pesan. Kirim pesan untuk memulai percakapan!</p>
+                </div>
+              ) : (
+                messages.map((msg) => {
+                  const isSelf = msg.sender_id === currentUser.id;
+                  const senderName = profilesMap[msg.sender_id] || 'User';
+                  return (
+                    <MessageBubble
+                      key={msg.id}
+                      message={msg}
+                      isSelf={isSelf}
+                      senderName={senderName}
+                    />
+                  );
+                })
+              )}
+              <div ref={messagesEndRef} />
+            </>
+          )}
+        </div>
+
+        {/* Chat input */}
+        {((role === 'admin' && selectedGuest) || role === 'guest') && (
+          <MessageInput
+            onSendMessage={handleSendMessage}
+            onTypingChange={handleTypingChange}
+            disabled={isOffline || (role === 'guest' && !adminProfile)}
+          />
+        )}
+      </div>
+
+      {/* ================================ */}
+      {/* Admin User Management Modal      */}
+      {/* ================================ */}
+      {showUserModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-xl max-h-[85vh] flex flex-col rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl overflow-hidden animate-zoom-in">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-white/5 px-6 py-4 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-500">
+                  <Users className="h-5 w-5 text-white" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-100">Kelola User</h3>
+                  <p className="text-[10px] text-slate-500">{allUsers.length} user terdaftar</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowUserModal(false)}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Modal Body - Scrollable User List */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {allUsers.length === 0 ? (
+                <div className="flex flex-col items-center justify-center p-8 text-center text-slate-600">
+                  <Users className="h-10 w-10 mb-3 opacity-30" />
+                  <p className="text-sm font-semibold text-slate-400">Belum ada user terdaftar</p>
+                  <p className="text-xs text-slate-600 mt-1">User baru yang mendaftar akan muncul di sini.</p>
+                </div>
+              ) : (
+                allUsers.map((user) => (
+                  <div
+                    key={user.id}
+                    className="flex flex-col md:flex-row md:items-center gap-4 rounded-xl border border-white/5 bg-slate-950/50 p-4 transition-all duration-200 hover:border-white/10"
+                  >
+                    {/* User Profile Info Area */}
+                    <div className="flex items-center gap-4 flex-1 min-w-0">
+                      {/* Avatar */}
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-slate-800 to-slate-700 font-bold text-violet-400 text-lg">
+                        {user.username.charAt(0).toUpperCase()}
+                      </div>
+
+                      {/* User Info */}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-slate-100 truncate">{user.username}</p>
+                        <p className="text-[10px] text-slate-500 mt-0.5">
+                          Terdaftar: {formatDate(user.created_at)}
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Reset Password Form Area (Item 1 Secure Reset) */}
+                    <div className="flex items-center gap-2 border-t border-white/5 pt-3 md:border-t-0 md:pt-0 shrink-0">
+                      <div className="relative">
+                        <input
+                          type="text"
+                          placeholder="Password Baru..."
+                          value={resetPasswords[user.id] || ''}
+                          onChange={(e) => setResetPasswords({ ...resetPasswords, [user.id]: e.target.value })}
+                          className="w-36 rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-600 outline-none focus:border-violet-500"
+                        />
+                      </div>
+                      <button
+                        onClick={() => handleResetPassword(user.id)}
+                        disabled={resettingUser === user.id}
+                        className={`flex h-8 items-center gap-1 px-3.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 ${
+                          resetSuccess[user.id]
+                            ? 'bg-emerald-500/20 border border-emerald-500/30 text-emerald-400'
+                            : 'bg-violet-600/20 border border-violet-500/25 text-violet-400 hover:bg-violet-600/30'
+                        }`}
+                        title="Setel Ulang Password"
+                      >
+                        {resettingUser === user.id ? (
+                          <RefreshCw className="h-3 w-3 animate-spin" />
+                        ) : resetSuccess[user.id] ? (
+                          <>
+                            <Check className="h-3 w-3" />
+                            Sukses
+                          </>
+                        ) : (
+                          <>
+                            <KeyRound className="h-3 w-3" />
+                            Reset PW
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Action Toolbar */}
+                    <div className="flex items-center justify-end gap-1.5 shrink-0 border-t border-white/5 pt-3 md:border-t-0 md:pt-0">
+                      {/* Chat Button */}
+                      <button
+                        onClick={() => {
+                          handleSelectGuest(user);
+                          setShowUserModal(false);
+                        }}
+                        className="flex h-9 w-9 items-center justify-center rounded-lg border border-violet-500/20 bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 hover:text-violet-300 transition-all duration-200"
+                        title="Buka Obrolan"
+                      >
+                        <MessageSquare className="h-4 w-4" />
+                      </button>
+
+                      {/* Delete Button */}
+                      <button
+                        onClick={() => handleDeleteUser(user.id)}
+                        disabled={deletingUser === user.id}
+                        className="flex h-9 w-9 items-center justify-center rounded-lg border border-rose-500/20 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 hover:text-rose-300 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Hapus User"
+                      >
+                        {deletingUser === user.id ? (
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-4 w-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-white/5 px-6 py-3 flex items-center gap-2 text-[10px] text-slate-500 shrink-0">
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-500/60" />
+              <span>Untuk keamanan, password mentah tidak lagi disimpan. Anda dapat menyetel ulang password tamu kapan saja.</span>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
