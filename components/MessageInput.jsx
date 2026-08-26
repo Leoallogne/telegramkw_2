@@ -29,6 +29,7 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled }
 
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
+  const imageInputRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const lastSentAtRef = useRef(0);
 
@@ -232,25 +233,48 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled }
       )}
 
       <form onSubmit={handleSubmit} className="flex items-center gap-2 p-4">
-        {/* Hidden File Input */}
+        {/* Hidden File Inputs */}
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*,.pdf,.docx,.txt,.zip"
+          accept=".pdf,.docx,.txt,.zip"
+          onChange={handleFileSelect}
+          className="hidden"
+        />
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/*"
           onChange={handleFileSelect}
           className="hidden"
         />
 
-        {/* Attach File Button */}
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={disabled || isSending || isUploading}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-slate-950/60 text-slate-400 hover:bg-slate-800 hover:text-violet-400 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Lampirkan File / Gambar"
-        >
-          <Paperclip className="h-5 w-5" />
-        </button>
+        {/* Upload Buttons */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {/* Upload Image Button */}
+          <button
+            type="button"
+            onClick={() => imageInputRef.current?.click()}
+            disabled={disabled || isSending || isUploading}
+            className="flex h-11 items-center gap-1.5 rounded-xl border border-indigo-500/20 bg-indigo-500/10 px-3 text-indigo-400 hover:bg-indigo-500/20 hover:text-indigo-300 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Unggah Foto / Gambar"
+          >
+            <ImageIcon className="h-5 w-5" />
+            <span className="hidden sm:inline text-xs font-semibold">Foto</span>
+          </button>
+
+          {/* Upload Document Button */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={disabled || isSending || isUploading}
+            className="flex h-11 items-center gap-1.5 rounded-xl border border-violet-500/20 bg-violet-500/10 px-3 text-violet-400 hover:bg-violet-500/20 hover:text-violet-300 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Unggah File / Dokumen"
+          >
+            <Paperclip className="h-5 w-5" />
+            <span className="hidden sm:inline text-xs font-semibold">File</span>
+          </button>
+        </div>
 
         {/* Text Input */}
         <div className="relative flex-1">
