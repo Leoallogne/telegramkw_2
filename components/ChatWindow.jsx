@@ -48,8 +48,11 @@ export default function ChatWindow({ currentUser, onLogout }) {
   const [callState, setCallState] = useState(null);
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
+  const remoteStreamRef = useRef(null);
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const remoteAudioRef = useRef(null);
+  const iceCandidatesQueueRef = useRef([]);
 
   // Presence State: { [userId]: { online: boolean, lastSeen: string } }
   const [presenceMap, setPresenceMap] = useState({});
@@ -90,7 +93,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
   const channelRef = useRef(null);
   const callChannelRef = useRef(null);
 
-  // Web Audio API Synthesizers (Chime & Ringtone)
+  // Web Audio API Synthesizer
   const playNotificationChime = () => {
     if (!notifySound) return;
     try {
@@ -300,6 +303,21 @@ export default function ChatWindow({ currentUser, onLogout }) {
     };
   }, [currentUser]);
 
+  // Bind WebRTC streams to DOM video/audio elements whenever callState or refs update
+  useEffect(() => {
+    if (callState) {
+      if (localVideoRef.current && localStreamRef.current) {
+        localVideoRef.current.srcObject = localStreamRef.current;
+      }
+      if (remoteVideoRef.current && remoteStreamRef.current) {
+        remoteVideoRef.current.srcObject = remoteStreamRef.current;
+      }
+      if (remoteAudioRef.current && remoteStreamRef.current) {
+        remoteAudioRef.current.srcObject = remoteStreamRef.current;
+      }
+    }
+  }, [callState]);
+
   // WebRTC Signaling Channel Setup
   useEffect(() => {
     if (!currentUser) return;
@@ -324,14 +342,28 @@ export default function ChatWindow({ currentUser, onLogout }) {
       })
       .on('broadcast', { event: 'call-answer' }, async ({ payload }) => {
         if (payload.targetId === currentUser.id && peerConnectionRef.current) {
-          await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(payload.answer));
-          setCallState((prev) => prev ? { ...prev, isConnected: true } : null);
+          try {
+            await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(payload.answer));
+            setCallState((prev) => prev ? { ...prev, isConnected: true } : null);
+
+            // Process queued ICE candidates
+            while (iceCandidatesQueueRef.current.length > 0) {
+              const cand = iceCandidatesQueueRef.current.shift();
+              await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(cand));
+            }
+          } catch (e) {
+            console.error('Error setting remote description answer:', e);
+          }
         }
       })
       .on('broadcast', { event: 'ice-candidate' }, async ({ payload }) => {
         if (payload.targetId === currentUser.id && peerConnectionRef.current) {
           try {
-            await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(payload.candidate));
+            if (peerConnectionRef.current.remoteDescription) {
+              await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(payload.candidate));
+            } else {
+              iceCandidatesQueueRef.current.push(payload.candidate);
+            }
           } catch (e) {
             console.error('Error adding ICE candidate:', e);
           }
@@ -367,6 +399,8 @@ export default function ChatWindow({ currentUser, onLogout }) {
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
     }
+    remoteStreamRef.current = null;
+    iceCandidatesQueueRef.current = [];
     setCallState(null);
   };
 
@@ -379,7 +413,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
         video: isVideo
       });
       localStreamRef.current = stream;
-      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
       const pc = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
@@ -389,9 +422,9 @@ export default function ChatWindow({ currentUser, onLogout }) {
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
       pc.ontrack = (event) => {
-        if (remoteVideoRef.current && event.streams[0]) {
-          remoteVideoRef.current.srcObject = event.streams[0];
-        }
+        remoteStreamRef.current = event.streams[0];
+        if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
+        if (remoteAudioRef.current) remoteAudioRef.current.srcObject = event.streams[0];
       };
 
       pc.onicecandidate = (event) => {
@@ -444,7 +477,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
         video: callState.isVideo
       });
       localStreamRef.current = stream;
-      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
       const pc = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
@@ -454,9 +486,9 @@ export default function ChatWindow({ currentUser, onLogout }) {
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
       pc.ontrack = (event) => {
-        if (remoteVideoRef.current && event.streams[0]) {
-          remoteVideoRef.current.srcObject = event.streams[0];
-        }
+        remoteStreamRef.current = event.streams[0];
+        if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
+        if (remoteAudioRef.current) remoteAudioRef.current.srcObject = event.streams[0];
       };
 
       pc.onicecandidate = (event) => {
@@ -472,6 +504,12 @@ export default function ChatWindow({ currentUser, onLogout }) {
       await pc.setRemoteDescription(new RTCSessionDescription(callState.sdpOffer));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
+
+      // Process queued ICE candidates
+      while (iceCandidatesQueueRef.current.length > 0) {
+        const cand = iceCandidatesQueueRef.current.shift();
+        await pc.addIceCandidate(new RTCIceCandidate(cand));
+      }
 
       setCallState((prev) => ({ ...prev, isConnected: true, isIncoming: false }));
 
@@ -744,7 +782,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  // Self-Destruct Message Auto-Delete Handler
   const handleSelfDestructMessage = async (messageId) => {
     try {
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
@@ -1064,6 +1101,10 @@ export default function ChatWindow({ currentUser, onLogout }) {
       {/* WebRTC Active / Incoming Call Modal Overlay */}
       {callState && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-xl p-4 animate-fade-in">
+          
+          {/* Audio element for Voice Calls */}
+          <audio ref={remoteAudioRef} autoPlay className="hidden" />
+
           <div className="relative w-full max-w-lg overflow-hidden rounded-3xl border border-white/10 bg-slate-950/90 shadow-2xl p-6 text-center">
             
             {/* Call Header Status */}
