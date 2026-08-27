@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { FileText, Download, ExternalLink, Play, Pause, Reply, CornerDownRight, Smile, Pencil, Trash2, Pin, Check, X, Flame, MapPin } from 'lucide-react';
+import { FileText, Download, ExternalLink, Play, Pause, Reply, CornerDownRight, Smile, Pencil, Trash2, Pin, Check, X, Flame, MapPin, Copy } from 'lucide-react';
 
 function sanitizeForDisplay(str) {
   if (typeof str !== 'string') return '';
@@ -67,6 +67,7 @@ export default function MessageBubble({
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [audioProgress, setAudioProgress] = useState(0);
   const [showReactionPicker, setShowReactionPicker] = useState(false);
+  const [copiedText, setCopiedText] = useState(false);
 
   // Self-Destruct Countdown state
   const [countdown, setCountdown] = useState(message?.expire_seconds || null);
@@ -147,6 +148,14 @@ export default function MessageBubble({
     setIsEditing(false);
   };
 
+  const handleCopyText = () => {
+    if (text) {
+      navigator.clipboard.writeText(text);
+      setCopiedText(true);
+      setTimeout(() => setCopiedText(false), 2000);
+    }
+  };
+
   const reactionCounts = reactions.reduce((acc, r) => {
     if (!acc[r.emoji]) {
       acc[r.emoji] = { count: 0, hasMine: false };
@@ -223,6 +232,17 @@ export default function MessageBubble({
 
           {/* Action Toolbar */}
           <div className="flex items-center gap-1">
+            {text && (
+              <button
+                type="button"
+                onClick={handleCopyText}
+                className="p-1 text-white/40 hover:text-white transition-colors"
+                title={copiedText ? 'Tersalin!' : 'Salin Teks'}
+              >
+                {copiedText ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+              </button>
+            )}
+
             {onPinMessage && (
               <button
                 type="button"

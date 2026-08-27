@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, AlertCircle, Paperclip, X, FileText, Image as ImageIcon, Mic, Square, Smile, CornerDownRight, Clock, Flame, MapPin } from 'lucide-react';
+import { Send, Loader2, AlertCircle, Paperclip, X, FileText, Image as ImageIcon, Mic, Square, Smile, CornerDownRight, Clock, Flame, MapPin, UploadCloud } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 
 function sanitizeInput(str) {
@@ -36,10 +36,11 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
   const [selectedFile, setSelectedFile] = useState(null);
   const [filePreviewUrl, setFilePreviewUrl] = useState(null);
   
-  // Audio recording & Location state
+  // Audio recording, Location & Drag-and-Drop state
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [isGettingLocation, setIsGettingLocation] = useState(false);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
   
   // Emoji picker & Timer picker state
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -70,8 +71,7 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
     };
   }, [filePreviewUrl]);
 
-  const handleFileSelect = (e) => {
-    const file = e.target.files?.[0];
+  const validateAndSetFile = (file) => {
     if (!file) return;
 
     if (file.size > MAX_FILE_SIZE_BYTES) {
@@ -90,6 +90,32 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
     } else {
       setFilePreviewUrl(null);
     }
+  };
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    validateAndSetFile(file);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDraggingFile) setIsDraggingFile(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingFile(false);
+  };
+
+  const handleDropFile = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingFile(false);
+
+    const file = e.dataTransfer.files?.[0];
+    validateAndSetFile(file);
   };
 
   const removeSelectedFile = () => {
@@ -389,8 +415,22 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
   const isDisabled = disabled || isSending || isUploading || rateLimited || isOverLimit || (!text.trim() && !selectedFile);
 
   return (
-    <div className="relative border-t border-white/5 bg-slate-900/60 backdrop-blur-md">
-      
+    <div
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDropFile}
+      className={`relative border-t border-white/5 bg-slate-900/60 backdrop-blur-md transition-all ${
+        isDraggingFile ? 'ring-2 ring-violet-500 bg-violet-950/20' : ''
+      }`}
+    >
+      {/* Drag & Drop Visual Overlay */}
+      {isDraggingFile && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center gap-2 bg-violet-600/90 backdrop-blur-md text-white font-bold text-sm animate-fade-in pointer-events-none">
+          <UploadCloud className="h-6 w-6 animate-bounce" />
+          <span>Lepaskan file di sini untuk melampirkan ke obrolan</span>
+        </div>
+      )}
+
       {/* Inline Emoji Picker Popover */}
       {showEmojiPicker && (
         <div className="absolute bottom-full left-4 mb-2 z-40 w-64 rounded-2xl border border-white/10 bg-slate-900/95 p-3 shadow-2xl backdrop-blur-xl animate-zoom-in">
