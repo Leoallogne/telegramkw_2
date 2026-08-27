@@ -210,14 +210,66 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
     mediaRecorderRef.current.stop();
   };
 
+  const compressImage = (file) => {
+    return new Promise((resolve) => {
+      if (!file.type.startsWith('image/') || file.type.includes('gif')) {
+        resolve(file);
+        return;
+      }
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        const maxDim = 1600;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+
+        canvas.toBlob(
+          (blob) => {
+            if (!blob) {
+              resolve(file);
+              return;
+            }
+            const compressedFile = new File([blob], file.name.replace(/\.[^/.]+$/, "") + ".webp", {
+              type: "image/webp",
+              lastModified: Date.now(),
+            });
+            resolve(compressedFile);
+          },
+          "image/webp",
+          0.82
+        );
+      };
+      img.onerror = () => resolve(file);
+      img.src = url;
+    });
+  };
+
   const uploadAttachment = async (file) => {
-    const cleanName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const targetFile = file.type.startsWith('image/') ? await compressImage(file) : file;
+    const cleanName = targetFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
     const fileName = `${Date.now()}_${cleanName}`;
     const filePath = `chat-attachments/${fileName}`;
 
     const { error: uploadError } = await supabase.storage
       .from('chat-attachments')
-      .upload(filePath, file, { cacheControl: '3600', upsert: false });
+      .upload(filePath, targetFile, { cacheControl: '3600', upsert: false });
 
     if (uploadError) throw uploadError;
 
@@ -227,8 +279,8 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
 
     return {
       publicUrl: publicUrlData.publicUrl,
-      isImage: file.type.startsWith('image/'),
-      originalName: file.name
+      isImage: targetFile.type.startsWith('image/'),
+      originalName: targetFile.name
     };
   };
 

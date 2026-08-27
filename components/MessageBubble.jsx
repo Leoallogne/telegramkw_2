@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
-import { FileText, Download, ExternalLink, Play, Pause, Reply, CornerDownRight, Smile } from 'lucide-react';
+import { FileText, Download, ExternalLink, Play, Pause, Reply, CornerDownRight, Smile, Pencil, Trash2, Pin, Check, X } from 'lucide-react';
 
 function sanitizeForDisplay(str) {
   if (typeof str !== 'string') return '';
@@ -20,21 +20,18 @@ function parseMessageContent(rawContent) {
   let file = null;
   let audio = null;
 
-  // Check for audio marker: [audio:URL]
   const audioMatch = text.match(/\[audio:(https?:\/\/[^\]]+)\]/);
   if (audioMatch) {
     audio = audioMatch[1];
     text = text.replace(audioMatch[0], '').trim();
   }
 
-  // Check for image marker: [image:URL]
   const imageMatch = text.match(/\[image:(https?:\/\/[^\]]+)\]/);
   if (imageMatch) {
     image = imageMatch[1];
     text = text.replace(imageMatch[0], '').trim();
   }
 
-  // Check for file marker: [file:FILENAME|URL]
   const fileMatch = text.match(/\[file:([^|]+)\|(https?:\/\/[^\]]+)\]/);
   if (fileMatch) {
     file = { name: fileMatch[1], url: fileMatch[2] };
@@ -53,16 +50,25 @@ export default function MessageBubble({
   quotedMessage,
   reactions = [],
   onReact,
-  onReply
+  onReply,
+  onEditMessage,
+  onDeleteMessage,
+  onPinMessage,
+  onImageClick
 }) {
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [audioProgress, setAudioProgress] = useState(0);
   const [showReactionPicker, setShowReactionPicker] = useState(false);
+
+  // Inline edit state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState('');
+
   const audioRef = useRef(null);
 
-  if (!message || typeof message.content !== 'string') return null;
+  if (!message) return null;
 
-  const { text, image, file, audio } = parseMessageContent(message.content);
+  const { text, image, file, audio } = parseMessageContent(message.content || '');
   const safeSenderName = sanitizeForDisplay(senderName || 'Anonymous').slice(0, 50);
 
   const formatTime = (isoString) => {
@@ -99,7 +105,18 @@ export default function MessageBubble({
     setAudioProgress(0);
   };
 
-  // Group reactions by emoji: { '👍': { count: 2, hasMine: true/false } }
+  const handleStartEdit = () => {
+    setIsEditing(true);
+    setEditText(text);
+  };
+
+  const handleSaveEdit = () => {
+    if (onEditMessage && editText.trim()) {
+      onEditMessage(message.id, editText.trim());
+    }
+    setIsEditing(false);
+  };
+
   const reactionCounts = reactions.reduce((acc, r) => {
     if (!acc[r.emoji]) {
       acc[r.emoji] = { count: 0, hasMine: false };
@@ -108,6 +125,17 @@ export default function MessageBubble({
     if (r.isMine) acc[r.emoji].hasMine = true;
     return acc;
   }, {});
+
+  // Soft Deleted Message View
+  if (message.is_deleted) {
+    return (
+      <div className={`flex w-full mb-3 ${isSelf ? 'justify-end' : 'justify-start'}`}>
+        <div className="rounded-2xl border border-white/5 bg-slate-900/40 px-4 py-2 text-xs italic text-slate-500 select-none">
+          🚫 Pesan ini telah dihapus
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -121,7 +149,7 @@ export default function MessageBubble({
           isSelf
             ? 'rounded-tr-none bg-gradient-to-br from-violet-600 to-indigo-600 text-white shadow-indigo-900/10'
             : 'rounded-tl-none bg-slate-800 text-slate-100 border border-slate-700/50 shadow-slate-950/10'
-        }`}
+        } ${message.is_pinned_chat ? 'ring-2 ring-amber-400/50' : ''}`}
       >
         {/* Emoji Reaction Popover Picker */}
         {showReactionPicker && (
@@ -146,7 +174,7 @@ export default function MessageBubble({
           </div>
         )}
 
-        {/* Sender Name & Inline Header Actions */}
+        {/* Sender Name & Action Buttons Header */}
         <div className="flex items-center justify-between gap-2 mb-1.5 select-none">
           {!isSelf ? (
             <span className="block text-xs font-bold text-violet-400 tracking-wide">
@@ -156,18 +184,57 @@ export default function MessageBubble({
             <span />
           )}
 
-          {/* Quick inline reply button inside bubble for clear access */}
-          {onReply && (
-            <button
-              type="button"
-              onClick={() => onReply(message)}
-              className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-white/50 hover:bg-white/10 hover:text-white transition-all"
-              title="Balas pesan ini"
-            >
-              <Reply className="h-3 w-3" />
-              <span>Balas</span>
-            </button>
-          )}
+          {/* Action Toolbar */}
+          <div className="flex items-center gap-1">
+            {/* Pin Message Button */}
+            {onPinMessage && (
+              <button
+                type="button"
+                onClick={() => onPinMessage(message.id, message.is_pinned_chat)}
+                className={`p-1 transition-colors ${message.is_pinned_chat ? 'text-amber-400' : 'text-white/40 hover:text-white'}`}
+                title={message.is_pinned_chat ? 'Lepas Pin Chat' : 'Sematkan di Header'}
+              >
+                <Pin className={`h-3 w-3 ${message.is_pinned_chat ? 'fill-amber-400' : ''}`} />
+              </button>
+            )}
+
+            {/* Edit Message Button (Own messages only) */}
+            {isSelf && text && onEditMessage && (
+              <button
+                type="button"
+                onClick={handleStartEdit}
+                className="p-1 text-white/40 hover:text-white transition-colors"
+                title="Edit pesan"
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
+            )}
+
+            {/* Delete Message Button (Own messages only) */}
+            {isSelf && onDeleteMessage && (
+              <button
+                type="button"
+                onClick={() => onDeleteMessage(message.id)}
+                className="p-1 text-white/40 hover:text-rose-300 transition-colors"
+                title="Hapus pesan"
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            )}
+
+            {/* Reply Button */}
+            {onReply && (
+              <button
+                type="button"
+                onClick={() => onReply(message)}
+                className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-white/50 hover:bg-white/10 hover:text-white transition-all"
+                title="Balas pesan ini"
+              >
+                <Reply className="h-3 w-3" />
+                <span>Balas</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Quoted Reply Container */}
@@ -210,15 +277,14 @@ export default function MessageBubble({
           </div>
         )}
 
-        {/* Image Attachment */}
+        {/* Image Attachment (Opens Lightbox on click) */}
         {image && (
           <div className="mb-2 overflow-hidden rounded-xl border border-white/10 bg-black/20">
-            <a
-              href={image}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="group/img relative block overflow-hidden"
-              title="Buka gambar ukuran penuh"
+            <button
+              type="button"
+              onClick={() => onImageClick ? onImageClick(image) : window.open(image, '_blank')}
+              className="group/img relative block w-full text-left overflow-hidden"
+              title="Perbesar gambar"
             >
               <img
                 src={image}
@@ -229,10 +295,10 @@ export default function MessageBubble({
               <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity duration-200">
                 <span className="flex items-center gap-1.5 rounded-lg bg-black/60 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur-md">
                   <ExternalLink className="h-3.5 w-3.5" />
-                  Buka Gambar
+                  Perbesar Gambar
                 </span>
               </div>
-            </a>
+            </button>
           </div>
         )}
 
@@ -260,11 +326,39 @@ export default function MessageBubble({
           </div>
         )}
 
-        {/* Text Content */}
-        {text && (
-          <p className="text-sm leading-relaxed whitespace-pre-wrap break-words pb-3 pr-6">
-            {text}
-          </p>
+        {/* Inline Message Edit Mode */}
+        {isEditing ? (
+          <div className="my-2 space-y-2">
+            <input
+              type="text"
+              value={editText}
+              onChange={(e) => setEditText(e.target.value)}
+              className="w-full rounded-lg border border-violet-400 bg-slate-950 px-3 py-1.5 text-sm text-slate-100 outline-none"
+              autoFocus
+            />
+            <div className="flex justify-end gap-1.5">
+              <button
+                type="button"
+                onClick={() => setIsEditing(false)}
+                className="flex items-center gap-1 rounded bg-slate-800 px-2 py-1 text-[10px] text-slate-300"
+              >
+                <X className="h-3 w-3" /> Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveEdit}
+                className="flex items-center gap-1 rounded bg-violet-600 px-2 py-1 text-[10px] text-white font-bold"
+              >
+                <Check className="h-3 w-3" /> Simpan
+              </button>
+            </div>
+          </div>
+        ) : (
+          text && (
+            <p className="text-sm leading-relaxed whitespace-pre-wrap break-words pb-3 pr-6">
+              {text}
+            </p>
+          )
         )}
 
         {/* Timestamp & Read Receipts */}
@@ -273,6 +367,7 @@ export default function MessageBubble({
             isSelf ? 'text-white/60' : 'text-slate-500'
           }`}
         >
+          {message.is_edited && <span className="italic text-[9px] text-slate-400">(edited)</span>}
           <span>{formatTime(message.created_at)}</span>
           {isSelf && (
             <span

@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import MessageBubble from './MessageBubble';
 import MessageInput from './MessageInput';
-import { LogOut, MessageSquare, Menu, X, Shield, RefreshCw, Users, Eye, EyeOff, Trash2, AlertTriangle, WifiOff, KeyRound, Check, Search, Pin } from 'lucide-react';
+import { LogOut, MessageSquare, Menu, X, Shield, RefreshCw, Users, Trash2, AlertTriangle, WifiOff, KeyRound, Check, Search, Pin, ZoomIn, ZoomOut, Download, BarChart2 } from 'lucide-react';
 
 export default function ChatWindow({ currentUser, onLogout }) {
   const [role, setRole] = useState('guest');
@@ -24,7 +24,13 @@ export default function ChatWindow({ currentUser, onLogout }) {
   const [resettingUser, setResettingUser] = useState(null);
   const [resetSuccess, setResetSuccess] = useState({});
 
-  // Search Bar & Filter State
+  // Presence State: { [userId]: { online: boolean, lastSeen: string } }
+  const [presenceMap, setPresenceMap] = useState({});
+
+  // Lightbox Modal State
+  const [activeLightboxUrl, setActiveLightboxUrl] = useState(null);
+
+  // Search Bar State
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
 
@@ -48,7 +54,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
   const messagesEndRef = useRef(null);
   
-  // Refs to prevent stale closures in realtime events
   const selectedGuestRef = useRef(selectedGuest);
   selectedGuestRef.current = selectedGuest;
   const adminProfileRef = useRef(adminProfile);
@@ -56,6 +61,32 @@ export default function ChatWindow({ currentUser, onLogout }) {
   const roleRef = useRef(role);
   roleRef.current = role;
   const channelRef = useRef(null);
+
+  // Audio Notification Chime (Web Audio API Synthesizer)
+  const playNotificationChime = () => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
+      osc.frequency.exponentialRampToValueAtTime(659.25, ctx.currentTime + 0.15); // E5
+
+      gain.gain.setValueAtTime(0.12, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start();
+      osc.stop(ctx.currentTime + 0.3);
+    } catch {
+      // Ignore audio synthesis errors on strict autoplay policies
+    }
+  };
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.innerWidth < 768) {
@@ -156,6 +187,36 @@ export default function ChatWindow({ currentUser, onLogout }) {
     initializeChat();
   }, [currentUser]);
 
+  // Realtime Presence Tracker Setup
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const presenceChannel = supabase.channel('online-presence', {
+      config: { presence: { key: currentUser.id } }
+    });
+
+    presenceChannel
+      .on('presence', { event: 'sync' }, () => {
+        const state = presenceChannel.presenceState();
+        const activeMap = {};
+        Object.keys(state).forEach((key) => {
+          activeMap[key] = { online: true };
+        });
+        setPresenceMap(activeMap);
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await presenceChannel.track({
+            online_at: new Date().toISOString()
+          });
+        }
+      });
+
+    return () => {
+      supabase.removeChannel(presenceChannel);
+    };
+  }, [currentUser]);
+
   const loadAdminDashboard = async () => {
     try {
       const { data: guestProfiles, error: guestErr } = await supabase
@@ -241,12 +302,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  const profilesMapRef = useRef(profilesMap);
-  useEffect(() => {
-    profilesMapRef.current = profilesMap;
-  }, [profilesMap]);
-
-  // 2. Realtime Messages & Reactions Subscription Setup
+  // Realtime Messages & Reactions Subscription Setup
   useEffect(() => {
     if (!currentUser || loading) return;
 
@@ -272,6 +328,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
                 });
 
                 if (isAdminMsg) {
+                  playNotificationChime();
                   await markMessagesAsRead(adminData.id);
                 }
               }
@@ -288,6 +345,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
               });
               
               if (isFromActiveGuest) {
+                playNotificationChime();
                 await markMessagesAsRead(activeGuest.id);
               }
             }
@@ -327,7 +385,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
         }
       )
 
-      // Listen to Postgres Reactions Insert/Delete events
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'message_reactions' },
@@ -494,6 +551,60 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
+  // Edit Message
+  const handleEditMessage = async (messageId, newContent) => {
+    try {
+      const { error } = await supabase
+        .from('messages')
+        .update({ content: newContent, is_edited: true })
+        .eq('id', messageId)
+        .eq('sender_id', currentUser.id);
+
+      if (error) throw error;
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, content: newContent, is_edited: true } : m))
+      );
+    } catch (err) {
+      console.error('Edit error:', err);
+    }
+  };
+
+  // Soft Delete Message
+  const handleDeleteMessage = async (messageId) => {
+    try {
+      const { error } = await supabase
+        .from('messages')
+        .update({ is_deleted: true })
+        .eq('id', messageId)
+        .eq('sender_id', currentUser.id);
+
+      if (error) throw error;
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, is_deleted: true } : m))
+      );
+    } catch (err) {
+      console.error('Delete error:', err);
+    }
+  };
+
+  // Pin Message to Header
+  const handlePinMessage = async (messageId, currentPinned) => {
+    const nextPinned = !currentPinned;
+    try {
+      const { error } = await supabase
+        .from('messages')
+        .update({ is_pinned_chat: nextPinned })
+        .eq('id', messageId);
+
+      if (error) throw error;
+      setMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, is_pinned_chat: nextPinned } : m))
+      );
+    } catch (err) {
+      console.error('Pin message error:', err);
+    }
+  };
+
   // Admin Pin / Unpin Guest
   const handleTogglePinGuest = async (guestId, currentPinned, e) => {
     e.stopPropagation();
@@ -515,9 +626,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  // ============================
   // Admin User Management Logic
-  // ============================
   const openUserManagement = async () => {
     setShowUserModal(true);
     setResetPasswords({});
@@ -604,13 +713,15 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  // Filter messages by search query if active
   const filteredMessages = searchQuery.trim()
     ? messages.filter((m) => m.content.toLowerCase().includes(searchQuery.toLowerCase().trim()))
     : messages;
 
+  const pinnedMessageInChat = messages.find((m) => m.is_pinned_chat && !m.is_deleted);
+
   const activeChatPartnerId = role === 'admin' ? selectedGuest?.id : adminProfile?.id;
   const isPartnerTyping = activeChatPartnerId && typingUsers[activeChatPartnerId];
+  const isPartnerOnline = activeChatPartnerId && presenceMap[activeChatPartnerId]?.online;
 
   if (loading) {
     return (
@@ -624,6 +735,43 @@ export default function ChatWindow({ currentUser, onLogout }) {
   return (
     <div className="flex h-[100dvh] w-screen overflow-hidden bg-slate-950 font-sans text-slate-200">
       
+      {/* Fullscreen Image Lightbox Modal */}
+      {activeLightboxUrl && (
+        <div
+          onClick={() => setActiveLightboxUrl(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4 animate-fade-in"
+        >
+          <div className="relative max-w-4xl max-h-[90vh] overflow-hidden rounded-2xl border border-white/10 bg-slate-950/80 shadow-2xl">
+            <img
+              src={activeLightboxUrl}
+              alt="Fullscreen View"
+              className="max-h-[80vh] w-full object-contain"
+            />
+            <div className="absolute top-3 right-3 flex items-center gap-2">
+              <a
+                href={activeLightboxUrl}
+                target="_blank"
+                download
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="rounded-xl bg-black/60 p-2 text-white hover:bg-violet-600 transition-colors"
+                title="Unduh Gambar"
+              >
+                <Download className="h-5 w-5" />
+              </a>
+              <button
+                type="button"
+                onClick={() => setActiveLightboxUrl(null)}
+                className="rounded-xl bg-black/60 p-2 text-white hover:bg-rose-600 transition-colors"
+                title="Tutup"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Sidebar Backdrop Overlay for Mobile */}
       {isSidebarOpen && role === 'admin' && (
         <div
@@ -660,7 +808,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-violet-500/20 bg-violet-500/10 py-2.5 text-xs font-bold uppercase tracking-wider text-violet-400 hover:bg-violet-500/20 transition-all duration-200"
             >
               <Users className="h-4 w-4" />
-              Kelola User
+              Kelola User & Statistik
             </button>
           </div>
 
@@ -677,6 +825,8 @@ export default function ChatWindow({ currentUser, onLogout }) {
                 const isSelected = selectedGuest?.id === g.id;
                 const hasUnread = unreadGuests[g.id];
                 const isGuestTyping = typingUsers[g.id];
+                const isGuestOnline = presenceMap[g.id]?.online;
+
                 return (
                   <button
                     key={g.id}
@@ -689,6 +839,9 @@ export default function ChatWindow({ currentUser, onLogout }) {
                   >
                     <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-slate-800 to-slate-700 font-bold text-violet-400">
                       {g.username.charAt(0).toUpperCase()}
+                      {isGuestOnline && (
+                        <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-slate-900" />
+                      )}
                       {hasUnread && (
                         <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
                           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span>
@@ -702,11 +855,10 @@ export default function ChatWindow({ currentUser, onLogout }) {
                         {g.is_pinned && <Pin className="h-3 w-3 text-amber-400 fill-amber-400 shrink-0" />}
                       </div>
                       <p className={`truncate text-[10px] ${isGuestTyping ? 'text-emerald-400 font-medium animate-pulse' : 'text-slate-500'}`}>
-                        {isGuestTyping ? 'sedang mengetik...' : 'Guest User'}
+                        {isGuestTyping ? 'sedang mengetik...' : (isGuestOnline ? 'Online' : 'Guest User')}
                       </p>
                     </div>
 
-                    {/* Pin/Unpin Action Button */}
                     <button
                       type="button"
                       onClick={(e) => handleTogglePinGuest(g.id, g.is_pinned, e)}
@@ -746,11 +898,14 @@ export default function ChatWindow({ currentUser, onLogout }) {
               </button>
             )}
 
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-500 font-bold text-white shadow-md">
+            <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-500 font-bold text-white shadow-md">
               {role === 'admin' 
                 ? (selectedGuest ? selectedGuest.username.charAt(0).toUpperCase() : 'A')
                 : (adminProfile ? adminProfile.username.charAt(0).toUpperCase() : 'G')
               }
+              {isPartnerOnline && (
+                <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-slate-950" />
+              )}
             </div>
 
             <div className="flex-1 min-w-0">
@@ -768,10 +923,10 @@ export default function ChatWindow({ currentUser, onLogout }) {
                   </span>
                 ) : (
                   <>
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span className={`h-1.5 w-1.5 rounded-full ${isPartnerOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}`}></span>
                     {role === 'admin' 
-                      ? (selectedGuest ? 'Guest User Online' : 'Dashboard Aktif')
-                      : (adminProfile ? 'Support Online' : 'Menunggu Admin...')
+                      ? (selectedGuest ? (isPartnerOnline ? 'Online' : 'Offline') : 'Dashboard Aktif')
+                      : (adminProfile ? (isPartnerOnline ? 'Online' : 'Support Available') : 'Menunggu Admin...')
                     }
                   </>
                 )}
@@ -779,9 +934,8 @@ export default function ChatWindow({ currentUser, onLogout }) {
             </div>
           </div>
 
-          {/* Search Bar Toggle & User Profile Badge */}
+          {/* Search Bar Toggle & Profile Badge */}
           <div className="flex items-center gap-2 shrink-0">
-            {/* Search Input Toggle */}
             {showSearch ? (
               <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-slate-950/80 px-2 py-1">
                 <Search className="h-3.5 w-3.5 text-slate-400" />
@@ -825,6 +979,27 @@ export default function ChatWindow({ currentUser, onLogout }) {
           </div>
         </header>
 
+        {/* Pinned Message Header Banner */}
+        {pinnedMessageInChat && (
+          <div className="flex items-center justify-between border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-xs backdrop-blur-md">
+            <div className="flex items-center gap-2 overflow-hidden">
+              <Pin className="h-3.5 w-3.5 text-amber-400 fill-amber-400 shrink-0" />
+              <div className="overflow-hidden">
+                <span className="font-bold text-amber-300">Pesan Tersemat:</span>
+                <p className="truncate text-slate-300 text-[11px]">{pinnedMessageInChat.content}</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => handlePinMessage(pinnedMessageInChat.id, true)}
+              className="rounded p-1 text-slate-400 hover:text-white"
+              title="Lepas pin"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
         {/* Viewport for messages */}
         <div className="flex-1 overflow-y-auto px-4 md:px-6 py-4 scrollbar-thin">
           {error && (
@@ -856,7 +1031,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
                   const isSelf = msg.sender_id === currentUser.id;
                   const senderName = profilesMap[msg.sender_id] || 'User';
                   
-                  // Resolve quoted reply message if present
                   let quotedMsgData = null;
                   if (msg.reply_to_id) {
                     const originalMsg = messages.find((m) => m.id === msg.reply_to_id);
@@ -882,6 +1056,10 @@ export default function ChatWindow({ currentUser, onLogout }) {
                         content: msgToReply.content,
                         senderName: profilesMap[msgToReply.sender_id] || 'User'
                       })}
+                      onEditMessage={handleEditMessage}
+                      onDeleteMessage={handleDeleteMessage}
+                      onPinMessage={handlePinMessage}
+                      onImageClick={(url) => setActiveLightboxUrl(url)}
                     />
                   );
                 })
@@ -903,7 +1081,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
         )}
       </div>
 
-      {/* Admin User Management Modal */}
+      {/* Admin User Management & Analytics Modal */}
       {showUserModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
           <div className="relative w-full max-w-xl max-h-[85vh] flex flex-col rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl overflow-hidden animate-zoom-in">
@@ -915,7 +1093,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
                   <Users className="h-5 w-5 text-white" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-slate-100">Kelola User</h3>
+                  <h3 className="text-base font-bold text-slate-100">Kelola User & Statistik</h3>
                   <p className="text-[10px] text-slate-500">{allUsers.length} user terdaftar</p>
                 </div>
               </div>
@@ -925,6 +1103,25 @@ export default function ChatWindow({ currentUser, onLogout }) {
               >
                 <X className="h-5 w-5" />
               </button>
+            </div>
+
+            {/* Analytics Summary Badges */}
+            <div className="grid grid-cols-3 gap-3 px-6 py-3 border-b border-white/5 bg-slate-950/40 shrink-0 text-center">
+              <div className="rounded-xl border border-white/5 bg-slate-900 p-2.5">
+                <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Total User</p>
+                <p className="text-lg font-extrabold text-violet-400 mt-0.5">{allUsers.length}</p>
+              </div>
+              <div className="rounded-xl border border-white/5 bg-slate-900 p-2.5">
+                <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Pesan Chat</p>
+                <p className="text-lg font-extrabold text-indigo-400 mt-0.5">{messages.length}</p>
+              </div>
+              <div className="rounded-xl border border-white/5 bg-slate-900 p-2.5">
+                <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Status Sistem</p>
+                <p className="text-xs font-bold text-emerald-400 mt-1 flex items-center justify-center gap-1">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  Aktif 100%
+                </p>
+              </div>
             </div>
 
             {/* Modal Body */}
@@ -941,7 +1138,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
                     key={user.id}
                     className="flex flex-col md:flex-row md:items-center gap-4 rounded-xl border border-white/5 bg-slate-950/50 p-4 transition-all duration-200 hover:border-white/10"
                   >
-                    {/* User Profile Info Area */}
                     <div className="flex items-center gap-4 flex-1 min-w-0">
                       <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-slate-800 to-slate-700 font-bold text-violet-400 text-lg">
                         {user.username.charAt(0).toUpperCase()}
@@ -955,7 +1151,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
                       </div>
                     </div>
 
-                    {/* Reset Password Form Area */}
                     <div className="flex items-center gap-2 border-t border-white/5 pt-3 md:border-t-0 md:pt-0 shrink-0">
                       <div className="relative">
                         <input
@@ -992,7 +1187,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
                       </button>
                     </div>
 
-                    {/* Action Toolbar */}
                     <div className="flex items-center justify-end gap-1.5 shrink-0 border-t border-white/5 pt-3 md:border-t-0 md:pt-0">
                       <button
                         onClick={() => {
