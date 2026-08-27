@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, AlertCircle, Paperclip, X, FileText, Image as ImageIcon, Mic, Square, Smile, CornerDownRight, Clock, Flame } from 'lucide-react';
+import { Send, Loader2, AlertCircle, Paperclip, X, FileText, Image as ImageIcon, Mic, Square, Smile, CornerDownRight, Clock, Flame, MapPin } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 
 function sanitizeInput(str) {
@@ -36,9 +36,10 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
   const [selectedFile, setSelectedFile] = useState(null);
   const [filePreviewUrl, setFilePreviewUrl] = useState(null);
   
-  // Audio recording state
+  // Audio recording & Location state
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [isGettingLocation, setIsGettingLocation] = useState(false);
   
   // Emoji picker & Timer picker state
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -99,6 +100,32 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
     }
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (imageInputRef.current) imageInputRef.current.value = '';
+  };
+
+  const handleShareLocation = () => {
+    if (!navigator.geolocation) {
+      setValidationError('Browser Anda tidak mendukung lokasi GPS.');
+      return;
+    }
+
+    setIsGettingLocation(true);
+    setValidationError('');
+
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        setIsGettingLocation(false);
+        const { latitude, longitude } = pos.coords;
+        const locationMarker = `[location:${latitude.toFixed(6)},${longitude.toFixed(6)}|Lokasi Saya]`;
+        await onSendMessage(locationMarker, replyingTo?.id || null, selectedTimer);
+        if (onCancelReply) onCancelReply();
+      },
+      (err) => {
+        setIsGettingLocation(false);
+        console.error('Geolocation error:', err);
+        setValidationError('Gagal mengakses lokasi GPS. Pastikan izin lokasi diaktifkan.');
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
   };
 
   const handleTextChange = useCallback((e) => {
@@ -541,7 +568,7 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
             className="hidden"
           />
 
-          {/* Upload & Emoji & Timer Action Buttons */}
+          {/* Action Toolbar */}
           <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
@@ -558,7 +585,7 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
               type="button"
               onClick={() => { setShowTimerPicker(!showTimerPicker); setShowEmojiPicker(false); }}
               disabled={disabled || isSending || isUploading}
-              className={`flex h-11 items-center gap-1 px-3 rounded-xl border transition-all duration-200 disabled:opacity-50 ${
+              className={`flex h-11 items-center gap-1 px-2.5 rounded-xl border transition-all duration-200 disabled:opacity-50 ${
                 selectedTimer
                   ? 'border-amber-500/40 bg-amber-500/15 text-amber-300 font-bold'
                   : 'border-white/10 bg-slate-950/60 text-slate-400 hover:bg-slate-800 hover:text-amber-400'
@@ -569,11 +596,26 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
               {selectedTimer && <span className="text-xs font-mono">{selectedTimer}s</span>}
             </button>
 
+            {/* Share GPS Location Button */}
+            <button
+              type="button"
+              onClick={handleShareLocation}
+              disabled={disabled || isSending || isUploading || isGettingLocation}
+              className="flex h-11 w-11 items-center justify-center rounded-xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300 transition-all duration-200 disabled:opacity-50"
+              title="Bagi Lokasi GPS Real-Time"
+            >
+              {isGettingLocation ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                <MapPin className="h-5 w-5" />
+              )}
+            </button>
+
             <button
               type="button"
               onClick={() => imageInputRef.current?.click()}
               disabled={disabled || isSending || isUploading}
-              className="flex h-11 items-center gap-1.5 rounded-xl border border-indigo-500/20 bg-indigo-500/10 px-3 text-indigo-400 hover:bg-indigo-500/20 hover:text-indigo-300 transition-all duration-200 disabled:opacity-50"
+              className="flex h-11 items-center gap-1.5 rounded-xl border border-indigo-500/20 bg-indigo-500/10 px-2.5 text-indigo-400 hover:bg-indigo-500/20 hover:text-indigo-300 transition-all duration-200 disabled:opacity-50"
               title="Unggah Foto / Gambar"
             >
               <ImageIcon className="h-5 w-5" />
@@ -584,7 +626,7 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={disabled || isSending || isUploading}
-              className="flex h-11 items-center gap-1.5 rounded-xl border border-violet-500/20 bg-violet-500/10 px-3 text-violet-400 hover:bg-violet-500/20 hover:text-violet-300 transition-all duration-200 disabled:opacity-50"
+              className="flex h-11 items-center gap-1.5 rounded-xl border border-violet-500/20 bg-violet-500/10 px-2.5 text-violet-400 hover:bg-violet-500/20 hover:text-violet-300 transition-all duration-200 disabled:opacity-50"
               title="Unggah File / Dokumen"
             >
               <Paperclip className="h-5 w-5" />
@@ -614,7 +656,7 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
                   ? 'border-rose-500 focus:border-rose-500 focus:ring-rose-500/20'
                   : 'border-white/10 focus:border-violet-500 focus:ring-violet-500/20'
               }`}
-          />
+            />
             {text.length > MAX_MESSAGE_LENGTH * 0.8 && (
               <span
                 className={`absolute bottom-2 right-3 text-[10px] select-none ${

@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import MessageBubble from './MessageBubble';
 import MessageInput from './MessageInput';
-import { LogOut, MessageSquare, Menu, X, Shield, RefreshCw, Users, Trash2, AlertTriangle, WifiOff, KeyRound, Check, Search, Pin, Download, UserPlus, Settings, Phone, Video, Mic, MicOff, VideoOff, PhoneOff, PhoneCall, Flame } from 'lucide-react';
+import { LogOut, MessageSquare, Menu, X, Shield, RefreshCw, Users, Trash2, AlertTriangle, WifiOff, KeyRound, Check, Search, Pin, Download, UserPlus, Settings, Phone, Video, Mic, MicOff, VideoOff, PhoneOff, PhoneCall, Flame, MapPin, Folder, Eye, PlusCircle, UserCheck, Image as ImageIcon, FileText } from 'lucide-react';
 
 export default function ChatWindow({ currentUser, onLogout }) {
   const [role, setRole] = useState('guest');
@@ -13,9 +13,24 @@ export default function ChatWindow({ currentUser, onLogout }) {
   
   // Dashboard & Conversation List State
   const [contacts, setContacts] = useState([]);
-  const [selectedContact, setSelectedContact] = useState(null);
+  const [groups, setGroups] = useState([]);
+  const [selectedContact, setSelectedContact] = useState(null); // contact or group object
   const [unreadContacts, setUnreadContacts] = useState({});
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+
+  // Group Creation Modal State
+  const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupDesc, setNewGroupDesc] = useState('');
+  const [selectedMembersForGroup, setSelectedMembersForGroup] = useState([]);
+  const [creatingGroup, setCreatingGroup] = useState(false);
+
+  // Shared Media Vault Modal State
+  const [showVaultModal, setShowVaultModal] = useState(false);
+  const [vaultTab, setVaultTab] = useState('images'); // 'images' | 'files' | 'audio' | 'locations'
+
+  // Admin User Detail & Password Access Modal State
+  const [selectedDetailUser, setSelectedDetailUser] = useState(null);
 
   // Admin User Management Modal state
   const [showUserModal, setShowUserModal] = useState(false);
@@ -44,7 +59,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
   const [settingsSuccess, setSettingsSuccess] = useState(false);
 
   // WebRTC Call State
-  // { targetId, targetName, isVideo, isIncoming, isConnected, isMuted, isCameraOff }
   const [callState, setCallState] = useState(null);
   const peerConnectionRef = useRef(null);
   const localStreamRef = useRef(null);
@@ -116,7 +130,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
       osc.start();
       osc.stop(ctx.currentTime + 0.3);
     } catch {
-      // Ignore audio synthesis errors on strict autoplay policies
+      // Ignore audio synthesis errors
     }
   };
 
@@ -144,7 +158,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
     };
   }, []);
 
-  // 1. Fetch user role, profiles, and friendships
+  // 1. Fetch user role, profiles, friendships, and groups
   useEffect(() => {
     const initializeChat = async () => {
       setLoading(true);
@@ -206,6 +220,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
         }
 
         await loadUserContacts(currentUser.id, userRole, adminData);
+        await loadUserGroups(currentUser.id, userRole);
 
       } catch (err) {
         console.error('Initialization error:', err);
@@ -273,6 +288,43 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
+  // Load Groups (Admin gets Master Access to ALL groups, Guests get joined groups)
+  const loadUserGroups = async (userId, userRole) => {
+    try {
+      if (userRole === 'admin') {
+        // Admin gets Master Access to ALL groups
+        const { data: allGroups } = await supabase
+          .from('groups')
+          .select('*')
+          .order('created_at', { ascending: false });
+        
+        setGroups(allGroups || []);
+      } else {
+        // Guest user gets joined groups
+        const { data: memberRows } = await supabase
+          .from('group_members')
+          .select('group_id')
+          .eq('user_id', userId);
+
+        const groupIds = memberRows?.map((m) => m.group_id) || [];
+
+        if (groupIds.length > 0) {
+          const { data: joinedGroups } = await supabase
+            .from('groups')
+            .select('*')
+            .in('id', groupIds)
+            .order('created_at', { ascending: false });
+          
+          setGroups(joinedGroups || []);
+        } else {
+          setGroups([]);
+        }
+      }
+    } catch (err) {
+      console.error('Error loading groups:', err);
+    }
+  };
+
   // Realtime Presence Tracker Setup
   useEffect(() => {
     if (!currentUser) return;
@@ -303,7 +355,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
     };
   }, [currentUser]);
 
-  // Bind WebRTC streams to DOM video/audio elements whenever callState or refs update
+  // Bind WebRTC streams to DOM video/audio elements
   useEffect(() => {
     if (callState) {
       if (localVideoRef.current && localStreamRef.current) {
@@ -346,7 +398,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
             await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(payload.answer));
             setCallState((prev) => prev ? { ...prev, isConnected: true } : null);
 
-            // Process queued ICE candidates
             while (iceCandidatesQueueRef.current.length > 0) {
               const cand = iceCandidatesQueueRef.current.shift();
               await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(cand));
@@ -406,7 +457,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
   // Start Outgoing WebRTC Call
   const startCall = async (isVideo) => {
-    if (!selectedContact) return;
+    if (!selectedContact || selectedContact.is_group) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
@@ -505,7 +556,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
-      // Process queued ICE candidates
       while (iceCandidatesQueueRef.current.length > 0) {
         const cand = iceCandidatesQueueRef.current.shift();
         await pc.addIceCandidate(new RTCIceCandidate(cand));
@@ -567,17 +617,27 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  const loadMessages = async (userId1, userId2) => {
-    if (!userId1 || !userId2) return;
+  const loadMessages = async (targetObj) => {
+    if (!targetObj) return;
     try {
-      const { data, error: msgErr } = await supabase
-        .from('messages')
-        .select('*')
-        .or(
-          `and(sender_id.eq.${userId1},receiver_id.eq.${userId2}),and(sender_id.eq.${userId2},receiver_id.eq.${userId1})`
-        )
-        .order('created_at', { ascending: true });
+      let query;
+      if (targetObj.is_group) {
+        query = supabase
+          .from('messages')
+          .select('*')
+          .eq('group_id', targetObj.id)
+          .order('created_at', { ascending: true });
+      } else {
+        query = supabase
+          .from('messages')
+          .select('*')
+          .or(
+            `and(sender_id.eq.${currentUser.id},receiver_id.eq.${targetObj.id}),and(sender_id.eq.${targetObj.id},receiver_id.eq.${currentUser.id})`
+          )
+          .order('created_at', { ascending: true });
+      }
 
+      const { data, error: msgErr } = await query;
       if (msgErr) throw msgErr;
       setMessages(data || []);
 
@@ -641,30 +701,34 @@ export default function ChatWindow({ currentUser, onLogout }) {
         { event: 'INSERT', schema: 'public', table: 'messages' },
         async (payload) => {
           const newMsg = payload.new;
-          const activeContact = selectedContactRef.current;
-          
-          const isFromActive = newMsg.sender_id === activeContact?.id && newMsg.receiver_id === currentUser.id;
-          const isToActive = newMsg.sender_id === currentUser.id && newMsg.receiver_id === activeContact?.id;
+          const activeTarget = selectedContactRef.current;
 
-          if (isFromActive || isToActive) {
+          let isMatch = false;
+          if (activeTarget?.is_group) {
+            isMatch = newMsg.group_id === activeTarget.id;
+          } else {
+            isMatch = (newMsg.sender_id === activeTarget?.id && newMsg.receiver_id === currentUser.id) ||
+                      (newMsg.sender_id === currentUser.id && newMsg.receiver_id === activeTarget?.id);
+          }
+
+          if (isMatch) {
             setMessages((prev) => {
               if (prev.some((m) => m.id === newMsg.id)) return prev;
               return [...prev, newMsg];
             });
 
-            if (isFromActive) {
+            if (newMsg.sender_id !== currentUser.id) {
               playNotificationChime();
-              await markMessagesAsRead(activeContact.id);
+              if (!activeTarget.is_group) await markMessagesAsRead(activeTarget.id);
             }
           }
 
-          if (newMsg.sender_id !== currentUser.id) {
-            if (!activeContact || activeContact.id !== newMsg.sender_id) {
-              setUnreadContacts((prev) => ({
-                ...prev,
-                [newMsg.sender_id]: true,
-              }));
-            }
+          if (newMsg.sender_id !== currentUser.id && !isMatch) {
+            const key = newMsg.group_id || newMsg.sender_id;
+            setUnreadContacts((prev) => ({
+              ...prev,
+              [key]: true,
+            }));
           }
         }
       )
@@ -737,14 +801,14 @@ export default function ChatWindow({ currentUser, onLogout }) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleSelectContact = async (contact) => {
-    setSelectedContact(contact);
+  const handleSelectContact = async (targetObj) => {
+    setSelectedContact(targetObj);
     setUnreadContacts((prev) => ({
       ...prev,
-      [contact.id]: false,
+      [targetObj.id]: false,
     }));
-    await loadMessages(currentUser.id, contact.id);
-    await markMessagesAsRead(contact.id);
+    await loadMessages(targetObj);
+    if (!targetObj.is_group) await markMessagesAsRead(targetObj.id);
     if (typeof window !== 'undefined' && window.innerWidth < 768) {
       setIsSidebarOpen(false);
     }
@@ -756,10 +820,15 @@ export default function ChatWindow({ currentUser, onLogout }) {
     try {
       const payload = {
         sender_id: currentUser.id,
-        receiver_id: selectedContact.id,
         content: content,
         is_read: false
       };
+
+      if (selectedContact.is_group) {
+        payload.group_id = selectedContact.id;
+      } else {
+        payload.receiver_id = selectedContact.id;
+      }
 
       if (replyToId) payload.reply_to_id = replyToId;
       if (expireSeconds) payload.expire_seconds = expireSeconds;
@@ -779,6 +848,60 @@ export default function ChatWindow({ currentUser, onLogout }) {
         event: 'typing',
         payload: { userId: currentUser.id, isTyping }
       });
+    }
+  };
+
+  // Group Creation Handler
+  const handleCreateGroupSubmit = async (e) => {
+    e.preventDefault();
+    const cleanName = newGroupName.trim();
+    if (!cleanName) {
+      alert('Nama grup tidak boleh kosong!');
+      return;
+    }
+
+    setCreatingGroup(true);
+    try {
+      const { data: newGroup, error: groupErr } = await supabase
+        .from('groups')
+        .insert({
+          name: cleanName,
+          description: newGroupDesc.trim(),
+          created_by: currentUser.id
+        })
+        .select()
+        .single();
+
+      if (groupErr) throw groupErr;
+
+      const membersToInsert = [
+        { group_id: newGroup.id, user_id: currentUser.id, role: 'admin' },
+        ...selectedMembersForGroup.map((userId) => ({
+          group_id: newGroup.id,
+          user_id: userId,
+          role: 'member'
+        }))
+      ];
+
+      const { error: memberErr } = await supabase
+        .from('group_members')
+        .insert(membersToInsert);
+
+      if (memberErr) throw memberErr;
+
+      const groupObj = { ...newGroup, is_group: true, username: newGroup.name };
+      setGroups((prev) => [groupObj, ...prev]);
+
+      setShowCreateGroupModal(false);
+      setNewGroupName('');
+      setNewGroupDesc('');
+      setSelectedMembersForGroup([]);
+      handleSelectContact(groupObj);
+    } catch (err) {
+      console.error('Create group error:', err);
+      alert('Gagal membuat grup: ' + err.message);
+    } finally {
+      setCreatingGroup(false);
     }
   };
 
@@ -1077,6 +1200,12 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
+  // Shared Vault Items Filtering
+  const vaultImages = messages.filter((m) => m.content.includes('[image:'));
+  const vaultFiles = messages.filter((m) => m.content.includes('[file:'));
+  const vaultAudio = messages.filter((m) => m.content.includes('[audio:'));
+  const vaultLocations = messages.filter((m) => m.content.includes('[location:'));
+
   const filteredMessages = searchQuery.trim()
     ? messages.filter((m) => m.content.toLowerCase().includes(searchQuery.toLowerCase().trim()))
     : messages;
@@ -1090,7 +1219,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
     return (
       <div className="flex min-h-[100dvh] flex-col items-center justify-center bg-slate-950 text-slate-200">
         <RefreshCw className="h-8 w-8 animate-spin text-violet-500 mb-4" />
-        <p className="text-sm text-slate-400 animate-pulse">Memuat obrolan & kontak...</p>
+        <p className="text-sm text-slate-400 animate-pulse">Memuat obrolan & grup...</p>
       </div>
     );
   }
@@ -1101,13 +1230,9 @@ export default function ChatWindow({ currentUser, onLogout }) {
       {/* WebRTC Active / Incoming Call Modal Overlay */}
       {callState && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-xl p-4 animate-fade-in">
-          
-          {/* Audio element for Voice Calls */}
           <audio ref={remoteAudioRef} autoPlay className="hidden" />
 
           <div className="relative w-full max-w-lg overflow-hidden rounded-3xl border border-white/10 bg-slate-950/90 shadow-2xl p-6 text-center">
-            
-            {/* Call Header Status */}
             <div className="mb-6 flex flex-col items-center">
               <div className="relative mb-3 flex h-24 w-24 items-center justify-center rounded-3xl bg-gradient-to-tr from-violet-600 to-indigo-500 font-extrabold text-white text-3xl shadow-xl shadow-indigo-600/30">
                 {callState.targetName ? callState.targetName.charAt(0).toUpperCase() : 'U'}
@@ -1124,7 +1249,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
               </p>
             </div>
 
-            {/* Video Streams Container (if Video Call) */}
             {callState.isVideo && (
               <div className="relative mb-6 h-64 w-full overflow-hidden rounded-2xl bg-black border border-white/10">
                 <video
@@ -1143,7 +1267,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
               </div>
             )}
 
-            {/* Call Action Controls */}
             {callState.isIncoming ? (
               <div className="flex items-center justify-center gap-6">
                 <button
@@ -1276,6 +1399,14 @@ export default function ChatWindow({ currentUser, onLogout }) {
           </div>
 
           <div className="flex items-center gap-1">
+            <button
+              onClick={() => setShowCreateGroupModal(true)}
+              className="rounded-xl border border-indigo-500/20 bg-indigo-500/10 p-2 text-indigo-400 hover:bg-indigo-500/20 transition-all"
+              title="Buat Grup Baru"
+            >
+              <Users className="h-4 w-4" />
+            </button>
+
             {role === 'guest' && (
               <button
                 onClick={handleOpenAddFriendModal}
@@ -1310,85 +1441,135 @@ export default function ChatWindow({ currentUser, onLogout }) {
               onClick={openUserManagement}
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-violet-500/20 bg-violet-500/10 py-2.5 text-xs font-bold uppercase tracking-wider text-violet-400 hover:bg-violet-500/20 transition-all duration-200"
             >
-              <Users className="h-4 w-4" />
-              Kelola User & Statistik
+              <Shield className="h-4 w-4" />
+              Kelola User & Detail Password
             </button>
           </div>
         )}
 
-        {/* Contacts / Conversations List */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-1">
-          <div className="flex items-center justify-between px-2 mb-3">
-            <h3 className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Daftar Chat</h3>
-            {role === 'guest' && (
+        {/* Conversations & Groups List */}
+        <div className="flex-1 overflow-y-auto p-3 space-y-4">
+          
+          {/* Groups Section */}
+          <div>
+            <div className="flex items-center justify-between px-2 mb-2">
+              <h3 className="text-[10px] font-bold uppercase tracking-wider text-indigo-400">
+                {role === 'admin' ? '👑 Semua Grup Sistem' : 'Grup Obrolan Saya'}
+              </h3>
               <button
-                onClick={handleOpenAddFriendModal}
-                className="text-[10px] font-semibold text-violet-400 hover:underline flex items-center gap-1"
+                onClick={() => setShowCreateGroupModal(true)}
+                className="text-[10px] font-semibold text-indigo-400 hover:underline flex items-center gap-0.5"
               >
-                <UserPlus className="h-3 w-3" /> Tambah
+                <PlusCircle className="h-3 w-3" /> Buat
               </button>
+            </div>
+
+            {groups.length === 0 ? (
+              <p className="px-2 text-[11px] text-slate-600 italic">Belum ada grup obrolan.</p>
+            ) : (
+              groups.map((grp) => {
+                const isSelected = selectedContact?.id === grp.id && selectedContact?.is_group;
+                const hasUnread = unreadContacts[grp.id];
+
+                return (
+                  <button
+                    key={grp.id}
+                    onClick={() => handleSelectContact({ ...grp, is_group: true, username: grp.name })}
+                    className={`group/item relative flex w-full items-center gap-3 rounded-xl p-3 text-left transition-all duration-200 mb-1 ${
+                      isSelected
+                        ? 'bg-gradient-to-r from-indigo-600/30 to-violet-600/20 border border-indigo-500/30 text-white shadow-md'
+                        : 'bg-slate-900/40 border border-transparent hover:bg-slate-800/50 text-slate-300 hover:text-slate-100'
+                    }`}
+                  >
+                    <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 font-bold text-white shadow-md">
+                      <Users className="h-5 w-5" />
+                      {hasUnread && (
+                        <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-3 w-3 bg-indigo-500"></span>
+                        </span>
+                      )}
+                    </div>
+                    <div className="overflow-hidden flex-1 min-w-0">
+                      <p className="truncate text-sm font-bold flex items-center gap-1.5">
+                        {grp.name}
+                        {role === 'admin' && (
+                          <span className="rounded bg-amber-500/20 px-1 py-0.2 text-[8px] font-bold text-amber-300 uppercase">Master</span>
+                        )}
+                      </p>
+                      <p className="truncate text-[10px] text-slate-500">{grp.description || 'Grup Obrolan'}</p>
+                    </div>
+                  </button>
+                );
+              })
             )}
           </div>
 
-          {contacts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center p-8 text-center text-slate-600 space-y-3">
-              <MessageSquare className="h-8 w-8 opacity-30" />
-              <p className="text-xs">Belum ada teman terdaftar.</p>
+          {/* Direct Contacts Section */}
+          <div>
+            <div className="flex items-center justify-between px-2 mb-2">
+              <h3 className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Pesan Pribadi</h3>
               {role === 'guest' && (
                 <button
                   onClick={handleOpenAddFriendModal}
-                  className="rounded-xl bg-violet-600 px-3 py-1.5 text-xs font-bold text-white shadow-md hover:bg-violet-500 transition-colors"
+                  className="text-[10px] font-semibold text-violet-400 hover:underline flex items-center gap-1"
                 >
-                  Cari & Tambahkan Teman
+                  <UserPlus className="h-3 w-3" /> Tambah
                 </button>
               )}
             </div>
-          ) : (
-            contacts.map((contact) => {
-              const isSelected = selectedContact?.id === contact.id;
-              const hasUnread = unreadContacts[contact.id];
-              const isContactTyping = typingUsers[contact.id];
-              const isContactOnline = presenceMap[contact.id]?.online;
 
-              return (
-                <button
-                  key={contact.id}
-                  onClick={() => handleSelectContact(contact)}
-                  className={`group/contact relative flex w-full items-center gap-3 rounded-xl p-3 text-left transition-all duration-200 ${
-                    isSelected
-                      ? 'bg-gradient-to-r from-violet-600/30 to-indigo-600/20 border border-violet-500/20 text-white shadow-md'
-                      : 'bg-slate-900/30 border border-transparent hover:bg-slate-800/50 text-slate-300 hover:text-slate-100'
-                  }`}
-                >
-                  <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-slate-800 to-slate-700 font-bold text-violet-400">
-                    {contact.username.charAt(0).toUpperCase()}
-                    {isContactOnline && (
-                      <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-slate-900" />
-                    )}
-                    {hasUnread && (
-                      <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-3 w-3 bg-violet-500"></span>
-                      </span>
-                    )}
-                  </div>
-                  <div className="overflow-hidden flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-1">
-                      <p className="truncate text-sm font-semibold flex items-center gap-1.5">
-                        {contact.username}
-                        {contact.role === 'admin' && (
-                          <span className="rounded bg-violet-500/20 px-1.5 py-0.2 text-[9px] font-bold text-violet-300 uppercase">Admin</span>
-                        )}
+            {contacts.length === 0 ? (
+              <div className="flex flex-col items-center justify-center p-6 text-center text-slate-600 space-y-2">
+                <p className="text-xs">Belum ada kontak terdaftar.</p>
+              </div>
+            ) : (
+              contacts.map((contact) => {
+                const isSelected = selectedContact?.id === contact.id && !selectedContact?.is_group;
+                const hasUnread = unreadContacts[contact.id];
+                const isContactTyping = typingUsers[contact.id];
+                const isContactOnline = presenceMap[contact.id]?.online;
+
+                return (
+                  <button
+                    key={contact.id}
+                    onClick={() => handleSelectContact(contact)}
+                    className={`group/contact relative flex w-full items-center gap-3 rounded-xl p-3 text-left transition-all duration-200 mb-1 ${
+                      isSelected
+                        ? 'bg-gradient-to-r from-violet-600/30 to-indigo-600/20 border border-violet-500/20 text-white shadow-md'
+                        : 'bg-slate-900/30 border border-transparent hover:bg-slate-800/50 text-slate-300 hover:text-slate-100'
+                    }`}
+                  >
+                    <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-slate-800 to-slate-700 font-bold text-violet-400">
+                      {contact.username.charAt(0).toUpperCase()}
+                      {isContactOnline && (
+                        <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-slate-900" />
+                      )}
+                      {hasUnread && (
+                        <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-3 w-3 bg-violet-500"></span>
+                        </span>
+                      )}
+                    </div>
+                    <div className="overflow-hidden flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-1">
+                        <p className="truncate text-sm font-semibold flex items-center gap-1.5">
+                          {contact.username}
+                          {contact.role === 'admin' && (
+                            <span className="rounded bg-violet-500/20 px-1.5 py-0.2 text-[9px] font-bold text-violet-300 uppercase">Admin</span>
+                          )}
+                        </p>
+                      </div>
+                      <p className={`truncate text-[10px] ${isContactTyping ? 'text-emerald-400 font-medium animate-pulse' : 'text-slate-500'}`}>
+                        {isContactTyping ? 'sedang mengetik...' : (isContactOnline ? 'Online' : (contact.status_bio || 'User'))}
                       </p>
                     </div>
-                    <p className={`truncate text-[10px] ${isContactTyping ? 'text-emerald-400 font-medium animate-pulse' : 'text-slate-500'}`}>
-                      {isContactTyping ? 'sedang mengetik...' : (isContactOnline ? 'Online' : (contact.status_bio || 'User'))}
-                    </p>
-                  </div>
-                </button>
-              );
-            })
-          )}
+                  </button>
+                );
+              })
+            )}
+          </div>
         </div>
       </div>
 
@@ -1414,18 +1595,20 @@ export default function ChatWindow({ currentUser, onLogout }) {
             </button>
 
             <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-500 font-bold text-white shadow-md">
-              {selectedContact ? selectedContact.username.charAt(0).toUpperCase() : 'C'}
-              {isPartnerOnline && (
+              {selectedContact ? (selectedContact.is_group ? <Users className="h-5 w-5" /> : selectedContact.username.charAt(0).toUpperCase()) : 'C'}
+              {!selectedContact?.is_group && isPartnerOnline && (
                 <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-slate-950" />
               )}
             </div>
 
             <div className="flex-1 min-w-0">
               <h2 className="text-sm font-bold text-slate-100 truncate">
-                {selectedContact ? selectedContact.username : 'Pilih Obrolan'}
+                {selectedContact ? selectedContact.username : 'Pilih Obrolan / Grup'}
               </h2>
               <p className="text-[10px] text-slate-400 flex items-center gap-1.5">
-                {isPartnerTyping ? (
+                {selectedContact?.is_group ? (
+                  <span className="text-indigo-400 font-medium">Grup Obrolan Publik</span>
+                ) : isPartnerTyping ? (
                   <span className="text-emerald-400 font-medium animate-pulse flex items-center gap-1">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-ping"></span>
                     sedang mengetik...
@@ -1435,7 +1618,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
                     <span className={`h-1.5 w-1.5 rounded-full ${isPartnerOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}`}></span>
                     {selectedContact 
                       ? (isPartnerOnline ? 'Online' : (selectedContact.status_bio || 'Offline'))
-                      : 'Pilih teman atau Support Admin'
+                      : 'Pilih teman atau grup obrolan'
                     }
                   </>
                 )}
@@ -1443,9 +1626,20 @@ export default function ChatWindow({ currentUser, onLogout }) {
             </div>
           </div>
 
-          {/* WebRTC Calling Buttons & Search Bar Toggle */}
+          {/* Header Action Buttons (Media Vault, Calls, Search, Logout) */}
           <div className="flex items-center gap-2 shrink-0">
             {selectedContact && (
+              <button
+                type="button"
+                onClick={() => setShowVaultModal(true)}
+                className="rounded-xl border border-white/5 bg-slate-900 p-2.5 text-slate-400 hover:bg-indigo-600 hover:text-white transition-all"
+                title="Brankas Galeri Media & File Tersimpan"
+              >
+                <Folder className="h-4 w-4" />
+              </button>
+            )}
+
+            {selectedContact && !selectedContact.is_group && (
               <>
                 <button
                   type="button"
@@ -1542,7 +1736,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
               </div>
               <h3 className="text-base font-bold text-slate-300">Belum Ada Chat Dipilih</h3>
               <p className="mt-1 max-w-xs text-xs text-slate-500">
-                Pilih teman atau Support Admin dari daftar di sebelah kiri untuk mulai mengobrol.
+                Pilih teman, grup obrolan, atau Support Admin dari daftar di sebelah kiri untuk mulai mengobrol.
               </p>
             </div>
           ) : (
@@ -1608,6 +1802,311 @@ export default function ChatWindow({ currentUser, onLogout }) {
           />
         )}
       </div>
+
+      {/* Group Creation Modal */}
+      {showCreateGroupModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl overflow-hidden animate-zoom-in">
+            <div className="flex items-center justify-between border-b border-white/5 px-6 py-4">
+              <div className="flex items-center gap-2.5">
+                <Users className="h-5 w-5 text-indigo-400" />
+                <h3 className="text-sm font-bold text-slate-100">Buat Grup Obrolan Baru</h3>
+              </div>
+              <button
+                onClick={() => setShowCreateGroupModal(false)}
+                className="rounded-lg p-1.5 text-slate-400 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateGroupSubmit} className="p-6 space-y-4">
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-400">Nama Grup</label>
+                <input
+                  type="text"
+                  placeholder="Misal: Tim Developer..."
+                  value={newGroupName}
+                  onChange={(e) => setNewGroupName(e.target.value)}
+                  className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-slate-200 outline-none focus:border-indigo-500"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-400">Deskripsi Grup (Opsional)</label>
+                <input
+                  type="text"
+                  placeholder="Deskripsi singkat..."
+                  value={newGroupDesc}
+                  onChange={(e) => setNewGroupDesc(e.target.value)}
+                  className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-slate-200 outline-none focus:border-indigo-500"
+                />
+              </div>
+
+              {/* Member Selector Checklist */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-400">Pilih Anggota Grup</label>
+                <div className="max-h-40 overflow-y-auto space-y-1.5 rounded-xl border border-white/10 bg-slate-950 p-2">
+                  {contacts.length === 0 ? (
+                    <p className="text-[10px] text-slate-500 p-2 text-center">Tambah teman terlebih dahulu untuk diundang ke grup.</p>
+                  ) : (
+                    contacts.map((c) => (
+                      <label
+                        key={c.id}
+                        className="flex items-center justify-between rounded-lg p-2 hover:bg-white/5 cursor-pointer text-xs"
+                      >
+                        <span className="font-bold text-slate-200">{c.username}</span>
+                        <input
+                          type="checkbox"
+                          checked={selectedMembersForGroup.includes(c.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedMembersForGroup([...selectedMembersForGroup, c.id]);
+                            } else {
+                              setSelectedMembersForGroup(selectedMembersForGroup.filter((id) => id !== c.id));
+                            }
+                          }}
+                          className="h-4 w-4 rounded accent-indigo-600"
+                        />
+                      </label>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className="border-t border-white/5 pt-4 flex justify-end">
+                <button
+                  type="submit"
+                  disabled={creatingGroup}
+                  className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 px-5 py-2.5 text-xs font-bold text-white shadow-md hover:scale-105 transition-all disabled:opacity-50"
+                >
+                  {creatingGroup ? <RefreshCw className="h-4 w-4 animate-spin" /> : 'Buat Grup'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Shared Media & File Vault Gallery Modal */}
+      {showVaultModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl overflow-hidden animate-zoom-in">
+            <div className="flex items-center justify-between border-b border-white/5 px-6 py-4 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <Folder className="h-5 w-5 text-indigo-400" />
+                <div>
+                  <h3 className="text-sm font-bold text-slate-100">Brankas Galeri Media & File</h3>
+                  <p className="text-[10px] text-slate-500">{selectedContact?.username || 'Percakapan'}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowVaultModal(false)}
+                className="rounded-lg p-1.5 text-slate-400 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Vault Tabs Header */}
+            <div className="flex border-b border-white/5 bg-slate-950/40 px-6 shrink-0 text-xs font-bold">
+              <button
+                onClick={() => setVaultTab('images')}
+                className={`flex items-center gap-1.5 py-3 px-3 border-b-2 transition-colors ${
+                  vaultTab === 'images' ? 'border-indigo-500 text-indigo-400' : 'border-transparent text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                <ImageIcon className="h-4 w-4" /> Foto ({vaultImages.length})
+              </button>
+              <button
+                onClick={() => setVaultTab('files')}
+                className={`flex items-center gap-1.5 py-3 px-3 border-b-2 transition-colors ${
+                  vaultTab === 'files' ? 'border-indigo-500 text-indigo-400' : 'border-transparent text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                <FileText className="h-4 w-4" /> Dokumen ({vaultFiles.length})
+              </button>
+              <button
+                onClick={() => setVaultTab('audio')}
+                className={`flex items-center gap-1.5 py-3 px-3 border-b-2 transition-colors ${
+                  vaultTab === 'audio' ? 'border-indigo-500 text-indigo-400' : 'border-transparent text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                <Mic className="h-4 w-4" /> Voice Notes ({vaultAudio.length})
+              </button>
+              <button
+                onClick={() => setVaultTab('locations')}
+                className={`flex items-center gap-1.5 py-3 px-3 border-b-2 transition-colors ${
+                  vaultTab === 'locations' ? 'border-indigo-500 text-indigo-400' : 'border-transparent text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                <MapPin className="h-4 w-4" /> Lokasi GPS ({vaultLocations.length})
+              </button>
+            </div>
+
+            {/* Vault Tab Content */}
+            <div className="flex-1 overflow-y-auto p-6">
+              {vaultTab === 'images' && (
+                vaultImages.length === 0 ? (
+                  <p className="text-center text-xs text-slate-500 p-8">Belum ada foto yang dibagikan.</p>
+                ) : (
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                    {vaultImages.map((m) => {
+                      const imgMatch = m.content.match(/\[image:(https?:\/\/[^\]]+)\]/);
+                      const imgUrl = imgMatch ? imgMatch[1] : null;
+                      if (!imgUrl) return null;
+                      return (
+                        <button
+                          key={m.id}
+                          onClick={() => setActiveLightboxUrl(imgUrl)}
+                          className="group relative aspect-square overflow-hidden rounded-xl border border-white/10 bg-black/40"
+                        >
+                          <img src={imgUrl} alt="Vault Media" className="h-full w-full object-cover group-hover:scale-110 transition-transform" />
+                        </button>
+                      );
+                    })}
+                  </div>
+                )
+              )}
+
+              {vaultTab === 'files' && (
+                vaultFiles.length === 0 ? (
+                  <p className="text-center text-xs text-slate-500 p-8">Belum ada dokumen yang dibagikan.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {vaultFiles.map((m) => {
+                      const fileMatch = m.content.match(/\[file:([^|]+)\|(https?:\/\/[^\]]+)\]/);
+                      if (!fileMatch) return null;
+                      return (
+                        <div key={m.id} className="flex items-center justify-between rounded-xl border border-white/5 bg-slate-950/60 p-3 text-xs">
+                          <div className="flex items-center gap-3">
+                            <FileText className="h-5 w-5 text-indigo-400" />
+                            <span className="font-semibold text-slate-200">{fileMatch[1]}</span>
+                          </div>
+                          <a href={fileMatch[2]} target="_blank" download className="p-2 rounded-lg bg-white/10 hover:bg-indigo-600 text-white">
+                            <Download className="h-4 w-4" />
+                          </a>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
+              )}
+
+              {vaultTab === 'audio' && (
+                vaultAudio.length === 0 ? (
+                  <p className="text-center text-xs text-slate-500 p-8">Belum ada pesan suara yang dibagikan.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {vaultAudio.map((m) => {
+                      const audioMatch = m.content.match(/\[audio:(https?:\/\/[^\]]+)\]/);
+                      if (!audioMatch) return null;
+                      return (
+                        <div key={m.id} className="flex items-center justify-between rounded-xl border border-white/5 bg-slate-950/60 p-3 text-xs">
+                          <audio src={audioMatch[1]} controls className="w-full h-8" />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
+              )}
+
+              {vaultTab === 'locations' && (
+                vaultLocations.length === 0 ? (
+                  <p className="text-center text-xs text-slate-500 p-8">Belum ada lokasi GPS yang dibagikan.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {vaultLocations.map((m) => {
+                      const locMatch = m.content.match(/\[location:([^,]+),([^|]+)\|([^\]]+)\]/);
+                      if (!locMatch) return null;
+                      return (
+                        <div key={m.id} className="flex items-center justify-between rounded-xl border border-emerald-500/20 bg-slate-950/60 p-3 text-xs">
+                          <div className="flex items-center gap-3">
+                            <MapPin className="h-5 w-5 text-emerald-400" />
+                            <div>
+                              <p className="font-bold text-slate-200">{locMatch[3]}</p>
+                              <p className="text-[10px] text-slate-500">{locMatch[1]}, {locMatch[2]}</p>
+                            </div>
+                          </div>
+                          <a href={`https://www.google.com/maps?q=${locMatch[1]},${locMatch[2]}`} target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-bold">
+                            Maps
+                          </a>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Admin User Detail & Password Access Modal */}
+      {selectedDetailUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl overflow-hidden animate-zoom-in p-6">
+            <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-4">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-600 font-bold text-white text-lg">
+                  {selectedDetailUser.username.charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-100">{selectedDetailUser.username}</h3>
+                  <p className="text-[10px] text-slate-500">ID: {selectedDetailUser.id}</p>
+                </div>
+              </div>
+              <button onClick={() => setSelectedDetailUser(null)} className="p-1 text-slate-400 hover:text-white">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="rounded-xl border border-white/5 bg-slate-950 p-3 space-y-1">
+                <p className="text-[10px] font-bold text-slate-500 uppercase">Bio Status</p>
+                <p className="text-slate-200">{selectedDetailUser.status_bio || '-'}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div className="rounded-xl border border-white/5 bg-slate-950 p-2.5">
+                  <p className="text-[9px] font-bold text-slate-500 uppercase">Tanggal Terdaftar</p>
+                  <p className="text-slate-200 mt-0.5">{formatDate(selectedDetailUser.created_at)}</p>
+                </div>
+                <div className="rounded-xl border border-white/5 bg-slate-950 p-2.5">
+                  <p className="text-[9px] font-bold text-slate-500 uppercase">Peran Akun</p>
+                  <p className="text-violet-400 font-bold mt-0.5 uppercase">{selectedDetailUser.role}</p>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-violet-500/20 bg-violet-500/10 p-3 space-y-2">
+                <p className="text-[10px] font-bold text-violet-300 uppercase flex items-center gap-1">
+                  <KeyRound className="h-3.5 w-3.5" /> Akses Kredensial & Reset Passkey
+                </p>
+                <p className="text-[11px] text-slate-400">
+                  Password pengguna disimpan secara enkripsi (hash). Anda dapat menyetel kata sandi passkey baru secara instan di bawah ini:
+                </p>
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="text"
+                    placeholder="Setel Password Baru..."
+                    value={resetPasswords[selectedDetailUser.id] || ''}
+                    onChange={(e) => setResetPasswords({ ...resetPasswords, [selectedDetailUser.id]: e.target.value })}
+                    className="flex-1 rounded-lg border border-white/10 bg-slate-950 px-3 py-1.5 text-xs text-slate-200 outline-none"
+                  />
+                  <button
+                    onClick={() => handleResetPassword(selectedDetailUser.id)}
+                    disabled={resettingUser === selectedDetailUser.id}
+                    className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-violet-500"
+                  >
+                    Setel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add Friend Search Modal */}
       {showAddFriendModal && (
@@ -1811,7 +2310,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
                   <Users className="h-5 w-5 text-white" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-slate-100">Kelola User & Statistik</h3>
+                  <h3 className="text-base font-bold text-slate-100">Kelola User & Detail Password</h3>
                   <p className="text-[10px] text-slate-500">{allUsers.length} user terdaftar</p>
                 </div>
               </div>
@@ -1867,43 +2366,16 @@ export default function ChatWindow({ currentUser, onLogout }) {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 border-t border-white/5 pt-3 md:border-t-0 md:pt-0 shrink-0">
-                      <div className="relative">
-                        <input
-                          type="text"
-                          placeholder="Password Baru..."
-                          value={resetPasswords[user.id] || ''}
-                          onChange={(e) => setResetPasswords({ ...resetPasswords, [user.id]: e.target.value })}
-                          className="w-36 rounded-lg border border-white/10 bg-slate-900 px-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-600 outline-none focus:border-violet-500"
-                        />
-                      </div>
-                      <button
-                        onClick={() => handleResetPassword(user.id)}
-                        disabled={resettingUser === user.id}
-                        className={`flex h-8 items-center gap-1 px-3.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all duration-200 ${
-                          resetSuccess[user.id]
-                            ? 'bg-emerald-500/20 border border-emerald-500/30 text-emerald-400'
-                            : 'bg-violet-600/20 border border-violet-500/25 text-violet-400 hover:bg-violet-600/30'
-                        }`}
-                        title="Setel Ulang Password"
-                      >
-                        {resettingUser === user.id ? (
-                          <RefreshCw className="h-3 w-3 animate-spin" />
-                        ) : resetSuccess[user.id] ? (
-                          <>
-                            <Check className="h-3 w-3" />
-                            Sukses
-                          </>
-                        ) : (
-                          <>
-                            <KeyRound className="h-3 w-3" />
-                            Reset PW
-                          </>
-                        )}
-                      </button>
-                    </div>
-
                     <div className="flex items-center justify-end gap-1.5 shrink-0 border-t border-white/5 pt-3 md:border-t-0 md:pt-0">
+                      <button
+                        onClick={() => setSelectedDetailUser(user)}
+                        className="flex h-9 items-center gap-1 px-3 rounded-lg border border-indigo-500/20 bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 text-xs font-semibold transition-all duration-200"
+                        title="Lihat Detail & Akses Password"
+                      >
+                        <Eye className="h-4 w-4" />
+                        Detail & PW
+                      </button>
+
                       <button
                         onClick={() => {
                           handleSelectContact(user);
@@ -1935,7 +2407,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
             <div className="border-t border-white/5 px-6 py-3 flex items-center gap-2 text-[10px] text-slate-500 shrink-0">
               <AlertTriangle className="h-3.5 w-3.5 text-amber-500/60" />
-              <span>Untuk keamanan, password mentah tidak lagi disimpan. Anda dapat menyetel ulang password tamu kapan saja.</span>
+              <span>Untuk keamanan, password mentah disembunyikan. Klik Detail & PW untuk mengelola akses kata sandi.</span>
             </div>
           </div>
         </div>

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { FileText, Download, ExternalLink, Play, Pause, Reply, CornerDownRight, Smile, Pencil, Trash2, Pin, Check, X, Flame } from 'lucide-react';
+import { FileText, Download, ExternalLink, Play, Pause, Reply, CornerDownRight, Smile, Pencil, Trash2, Pin, Check, X, Flame, MapPin } from 'lucide-react';
 
 function sanitizeForDisplay(str) {
   if (typeof str !== 'string') return '';
@@ -13,12 +13,19 @@ function sanitizeForDisplay(str) {
 }
 
 function parseMessageContent(rawContent) {
-  if (typeof rawContent !== 'string') return { text: '', image: null, file: null, audio: null };
+  if (typeof rawContent !== 'string') return { text: '', image: null, file: null, audio: null, location: null };
 
   let text = rawContent;
   let image = null;
   let file = null;
   let audio = null;
+  let location = null;
+
+  const locationMatch = text.match(/\[location:([^,]+),([^|]+)\|([^\]]+)\]/);
+  if (locationMatch) {
+    location = { lat: locationMatch[1], lng: locationMatch[2], name: locationMatch[3] };
+    text = text.replace(locationMatch[0], '').trim();
+  }
 
   const audioMatch = text.match(/\[audio:(https?:\/\/[^\]]+)\]/);
   if (audioMatch) {
@@ -38,7 +45,7 @@ function parseMessageContent(rawContent) {
     text = text.replace(fileMatch[0], '').trim();
   }
 
-  return { text: sanitizeForDisplay(text), image, file, audio };
+  return { text: sanitizeForDisplay(text), image, file, audio, location };
 }
 
 const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
@@ -91,7 +98,7 @@ export default function MessageBubble({
 
   if (!message) return null;
 
-  const { text, image, file, audio } = parseMessageContent(message.content || '');
+  const { text, image, file, audio, location } = parseMessageContent(message.content || '');
   const safeSenderName = sanitizeForDisplay(senderName || 'Anonymous').slice(0, 50);
 
   const formatTime = (isoString) => {
@@ -271,6 +278,30 @@ export default function MessageBubble({
               <span className="font-bold text-violet-300 block text-[11px] mb-0.5">{quotedMessage.senderName}</span>
               <p className="truncate text-slate-300 text-xs italic">{quotedMessage.content}</p>
             </div>
+          </div>
+        )}
+
+        {/* Live GPS Location Card */}
+        {location && (
+          <div className="mb-2.5 flex items-center justify-between gap-3 rounded-xl border border-emerald-500/30 bg-slate-950/60 p-3 shadow-md">
+            <div className="flex items-center gap-3 overflow-hidden">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                <MapPin className="h-5 w-5 animate-bounce" />
+              </div>
+              <div className="overflow-hidden">
+                <span className="font-bold text-xs text-emerald-300 block truncate">{location.name}</span>
+                <span className="text-[10px] font-mono text-slate-400 block truncate">{location.lat}, {location.lng}</span>
+              </div>
+            </div>
+            <a
+              href={`https://www.google.com/maps?q=${location.lat},${location.lng}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 shrink-0 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white shadow-md hover:bg-emerald-500 transition-colors"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              Google Maps
+            </a>
           </div>
         )}
 

@@ -43,11 +43,12 @@ CREATE TABLE public.profiles (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 5. Create messages table (with is_read check column, reply_to_id, editing, soft delete, pinned, and timer expire_seconds)
+-- 5. Create messages table (with is_read check column, reply_to_id, editing, soft delete, pinned, timer expire_seconds, and group_id)
 CREATE TABLE public.messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     sender_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
-    receiver_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    receiver_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    group_id UUID REFERENCES public.groups(id) ON DELETE CASCADE,
     content TEXT NOT NULL,
     is_read BOOLEAN DEFAULT false,
     reply_to_id UUID REFERENCES public.messages(id) ON DELETE SET NULL,
@@ -56,6 +57,26 @@ CREATE TABLE public.messages (
     is_pinned_chat BOOLEAN DEFAULT false,
     expire_seconds INTEGER DEFAULT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 5a. Create groups table
+CREATE TABLE public.groups (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    avatar_url TEXT DEFAULT '',
+    created_by UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 5b. Create group_members table
+CREATE TABLE public.group_members (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES public.groups(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    role TEXT CHECK (role IN ('admin', 'member')) DEFAULT 'member',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    UNIQUE(group_id, user_id)
 );
 
 -- 5b. Create friendships table for Add Friend / Contacts System
