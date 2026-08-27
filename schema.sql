@@ -78,6 +78,14 @@ CREATE TABLE public.message_reactions (
     UNIQUE(message_id, user_id, emoji)
 );
 
+-- 6. Performance Database Indexes
+CREATE INDEX IF NOT EXISTS idx_messages_sender_receiver ON public.messages(sender_id, receiver_id);
+CREATE INDEX IF NOT EXISTS idx_messages_created_at ON public.messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_message_reactions_message_id ON public.message_reactions(message_id);
+CREATE INDEX IF NOT EXISTS idx_friendships_user_id ON public.friendships(user_id);
+CREATE INDEX IF NOT EXISTS idx_friendships_friend_id ON public.friendships(friend_id);
+CREATE INDEX IF NOT EXISTS idx_profiles_username ON public.profiles(username);
+
 -- Enable Row Level Security (RLS)
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
