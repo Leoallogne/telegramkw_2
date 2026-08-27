@@ -11,7 +11,7 @@ export default function GuestLoginForm({ onLoginSuccess }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const guestEmail = (name) => `${name.toLowerCase().replace(/\s+/g, '_')}@guest.local`;
+  const guestEmail = (name) => `${name.toLowerCase().replace(/[^a-z0-9_]/g, '')}@guest.local`;
 
   // Guest Sign In
   const handleGuestLogin = async (e) => {

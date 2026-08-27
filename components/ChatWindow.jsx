@@ -78,13 +78,31 @@ export default function ChatWindow({ currentUser, onLogout }) {
       setLoading(true);
       setError('');
       try {
-        const { data: myProfile, error: myProfileErr } = await supabase
+        let { data: myProfile, error: myProfileErr } = await supabase
           .from('profiles')
           .select('*')
           .eq('id', currentUser.id)
           .single();
 
-        if (myProfileErr) throw myProfileErr;
+        if (myProfileErr || !myProfile) {
+          const fallbackUsername = currentUser.user_metadata?.username || `User_${currentUser.id.slice(0, 6)}`;
+          const isDefaultAdmin = currentUser.email === 'admin@example.com';
+          const { data: newProf, error: createErr } = await supabase
+            .from('profiles')
+            .upsert({
+              id: currentUser.id,
+              username: fallbackUsername,
+              role: isDefaultAdmin ? 'admin' : 'guest'
+            })
+            .select()
+            .single();
+
+          if (!createErr && newProf) {
+            myProfile = newProf;
+          } else if (myProfileErr) {
+            throw myProfileErr;
+          }
+        }
         
         const userRole = myProfile.role || 'guest';
         setRole(userRole);
