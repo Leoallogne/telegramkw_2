@@ -34,6 +34,11 @@ CREATE TABLE public.profiles (
     username TEXT NOT NULL UNIQUE,
     role TEXT CHECK (role IN ('guest', 'admin')) DEFAULT 'guest',
     is_pinned BOOLEAN DEFAULT false,
+    status_bio TEXT DEFAULT 'Hey there! I am using Chat.',
+    notify_sound BOOLEAN DEFAULT true,
+    notify_push BOOLEAN DEFAULT true,
+    show_read_receipts BOOLEAN DEFAULT true,
+    show_online_status BOOLEAN DEFAULT true,
     last_seen TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
@@ -50,6 +55,16 @@ CREATE TABLE public.messages (
     is_deleted BOOLEAN DEFAULT false,
     is_pinned_chat BOOLEAN DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 5b. Create friendships table for Add Friend / Contacts System
+CREATE TABLE public.friendships (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    friend_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    status TEXT CHECK (status IN ('pending', 'accepted')) DEFAULT 'accepted',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    UNIQUE(user_id, friend_id)
 );
 
 -- 5b. Create message_reactions table

@@ -4,16 +4,17 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import MessageBubble from './MessageBubble';
 import MessageInput from './MessageInput';
-import { LogOut, MessageSquare, Menu, X, Shield, RefreshCw, Users, Trash2, AlertTriangle, WifiOff, KeyRound, Check, Search, Pin, ZoomIn, ZoomOut, Download, BarChart2 } from 'lucide-react';
+import { LogOut, MessageSquare, Menu, X, Shield, RefreshCw, Users, Trash2, AlertTriangle, WifiOff, KeyRound, Check, Search, Pin, Download, UserPlus, Settings, User, Bell, Volume2, Eye, ShieldCheck, Heart, UserCheck } from 'lucide-react';
 
 export default function ChatWindow({ currentUser, onLogout }) {
   const [role, setRole] = useState('guest');
+  const [myProfileData, setMyProfileData] = useState(null);
   const [adminProfile, setAdminProfile] = useState(null);
   
-  // Admin dashboard state
-  const [guests, setGuests] = useState([]);
-  const [selectedGuest, setSelectedGuest] = useState(null);
-  const [unreadGuests, setUnreadGuests] = useState({});
+  // Dashboard & Conversation List State
+  const [contacts, setContacts] = useState([]); // List of chat contacts (Admin + Friends)
+  const [selectedContact, setSelectedContact] = useState(null);
+  const [unreadContacts, setUnreadContacts] = useState({});
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
   // Admin User Management Modal state
@@ -23,6 +24,24 @@ export default function ChatWindow({ currentUser, onLogout }) {
   const [resetPasswords, setResetPasswords] = useState({});
   const [resettingUser, setResettingUser] = useState(null);
   const [resetSuccess, setResetSuccess] = useState({});
+
+  // Add Friend Modal State
+  const [showAddFriendModal, setShowAddFriendModal] = useState(false);
+  const [friendSearchQuery, setFriendSearchQuery] = useState('');
+  const [searchUsersResults, setSearchUsersResults] = useState([]);
+  const [friendshipMap, setFriendshipMap] = useState({}); // { friendId: true }
+  const [addingFriendId, setAddingFriendId] = useState(null);
+
+  // Profile & Settings Modal State
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [editUsername, setEditUsername] = useState('');
+  const [editBio, setEditBio] = useState('');
+  const [notifySound, setNotifySound] = useState(true);
+  const [notifyPush, setNotifyPush] = useState(true);
+  const [showReadReceipts, setShowReadReceipts] = useState(true);
+  const [showOnlineStatus, setShowOnlineStatus] = useState(true);
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsSuccess, setSettingsSuccess] = useState(false);
 
   // Presence State: { [userId]: { online: boolean, lastSeen: string } }
   const [presenceMap, setPresenceMap] = useState({});
@@ -54,16 +73,17 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
   const messagesEndRef = useRef(null);
   
-  const selectedGuestRef = useRef(selectedGuest);
-  selectedGuestRef.current = selectedGuest;
+  const selectedContactRef = useRef(selectedContact);
+  selectedContactRef.current = selectedContact;
   const adminProfileRef = useRef(adminProfile);
   adminProfileRef.current = adminProfile;
   const roleRef = useRef(role);
   roleRef.current = role;
   const channelRef = useRef(null);
 
-  // Audio Notification Chime (Web Audio API Synthesizer)
+  // Web Audio API Sound Synthesizer
   const playNotificationChime = () => {
+    if (!notifySound) return;
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (!AudioCtx) return;
@@ -72,8 +92,8 @@ export default function ChatWindow({ currentUser, onLogout }) {
       const gain = ctx.createGain();
 
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
-      osc.frequency.exponentialRampToValueAtTime(659.25, ctx.currentTime + 0.15); // E5
+      osc.frequency.setValueAtTime(523.25, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(659.25, ctx.currentTime + 0.15);
 
       gain.gain.setValueAtTime(0.12, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
@@ -112,7 +132,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
     };
   }, []);
 
-  // 1. Fetch user role and profiles
+  // 1. Fetch user role, profiles, and friendships
   useEffect(() => {
     const initializeChat = async () => {
       setLoading(true);
@@ -144,38 +164,39 @@ export default function ChatWindow({ currentUser, onLogout }) {
           }
         }
         
+        setMyProfileData(myProfile);
         const userRole = myProfile.role || 'guest';
         setRole(userRole);
+        setEditUsername(myProfile.username || '');
+        setEditBio(myProfile.status_bio || 'Hey there! I am using Chat.');
+        setNotifySound(myProfile.notify_sound ?? true);
+        setNotifyPush(myProfile.notify_push ?? true);
+        setShowReadReceipts(myProfile.show_read_receipts ?? true);
+        setShowOnlineStatus(myProfile.show_online_status ?? true);
 
         setProfilesMap((prev) => ({
           ...prev,
           [currentUser.id]: myProfile.username,
         }));
 
-        if (userRole === 'admin') {
-          await loadAdminDashboard();
-        } else {
-          const { data: adminData, error: adminErr } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('role', 'admin')
-            .maybeSingle();
+        // Fetch Support Admin Profile
+        const { data: adminData } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('role', 'admin')
+          .maybeSingle();
 
-          if (adminErr) throw adminErr;
-
-          if (adminData) {
-            setAdminProfile(adminData);
-            setProfilesMap((prev) => ({
-              ...prev,
-              [adminData.id]: adminData.username,
-            }));
-            await loadMessages(currentUser.id, adminData.id);
-            await markMessagesAsRead(adminData.id);
-          } else {
-            setAdminProfile(null);
-            setMessages([]);
-          }
+        if (adminData) {
+          setAdminProfile(adminData);
+          setProfilesMap((prev) => ({
+            ...prev,
+            [adminData.id]: adminData.username,
+          }));
         }
+
+        // Fetch User Contacts / Friends List
+        await loadUserContacts(currentUser.id, userRole, adminData);
+
       } catch (err) {
         console.error('Initialization error:', err);
         setError('Gagal memuat konfigurasi chat.');
@@ -186,6 +207,63 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
     initializeChat();
   }, [currentUser]);
+
+  // Load Contacts list for WhatsApp sidebar view
+  const loadUserContacts = async (userId, userRole, adminData) => {
+    try {
+      if (userRole === 'admin') {
+        const { data: guestProfiles } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('role', 'guest')
+          .order('is_pinned', { ascending: false })
+          .order('created_at', { ascending: false });
+
+        setContacts(guestProfiles || []);
+        guestProfiles?.forEach((g) => {
+          setProfilesMap((prev) => ({ ...prev, [g.id]: g.username }));
+        });
+      } else {
+        // Fetch User Friendships
+        const { data: friendshipRows } = await supabase
+          .from('friendships')
+          .select('friend_id, user_id')
+          .or(`user_id.eq.${userId},friend_id.eq.${userId}`);
+
+        const friendIds = friendshipRows?.map((f) => f.user_id === userId ? f.friend_id : f.user_id) || [];
+        
+        const map = {};
+        friendIds.forEach((id) => { map[id] = true; });
+        setFriendshipMap(map);
+
+        let friendProfiles = [];
+        if (friendIds.length > 0) {
+          const { data: profs } = await supabase
+            .from('profiles')
+            .select('*')
+            .in('id', friendIds);
+          friendProfiles = profs || [];
+        }
+
+        // Always include Support Admin at top of contacts for Guests
+        const contactList = [];
+        if (adminData && adminData.id !== userId) {
+          contactList.push({ ...adminData, is_admin_contact: true });
+        }
+
+        friendProfiles.forEach((f) => {
+          if (!contactList.some((c) => c.id === f.id)) {
+            contactList.push(f);
+          }
+          setProfilesMap((prev) => ({ ...prev, [f.id]: f.username }));
+        });
+
+        setContacts(contactList);
+      }
+    } catch (err) {
+      console.error('Error loading contacts:', err);
+    }
+  };
 
   // Realtime Presence Tracker Setup
   useEffect(() => {
@@ -216,29 +294,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
       supabase.removeChannel(presenceChannel);
     };
   }, [currentUser]);
-
-  const loadAdminDashboard = async () => {
-    try {
-      const { data: guestProfiles, error: guestErr } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('role', 'guest')
-        .order('is_pinned', { ascending: false })
-        .order('created_at', { ascending: false });
-
-      if (guestErr) throw guestErr;
-
-      setGuests(guestProfiles || []);
-
-      const map = { [currentUser.id]: 'Admin' };
-      guestProfiles?.forEach((g) => {
-        map[g.id] = g.username;
-      });
-      setProfilesMap(map);
-    } catch (err) {
-      console.error('Error loading admin dashboard:', err);
-    }
-  };
 
   const loadMessages = async (userId1, userId2) => {
     if (!userId1 || !userId2) return;
@@ -314,61 +369,29 @@ export default function ChatWindow({ currentUser, onLogout }) {
         { event: 'INSERT', schema: 'public', table: 'messages' },
         async (payload) => {
           const newMsg = payload.new;
+          const activeContact = selectedContactRef.current;
+          
+          const isFromActive = newMsg.sender_id === activeContact?.id && newMsg.receiver_id === currentUser.id;
+          const isToActive = newMsg.sender_id === currentUser.id && newMsg.receiver_id === activeContact?.id;
 
-          if (roleRef.current === 'guest') {
-            const adminData = adminProfileRef.current;
-            if (adminData) {
-              const isAdminMsg = newMsg.sender_id === adminData.id && newMsg.receiver_id === currentUser.id;
-              const isOwnMsg = newMsg.sender_id === currentUser.id && newMsg.receiver_id === adminData.id;
-              
-              if (isAdminMsg || isOwnMsg) {
-                setMessages((prev) => {
-                  if (prev.some((m) => m.id === newMsg.id)) return prev;
-                  return [...prev, newMsg];
-                });
+          if (isFromActive || isToActive) {
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === newMsg.id)) return prev;
+              return [...prev, newMsg];
+            });
 
-                if (isAdminMsg) {
-                  playNotificationChime();
-                  await markMessagesAsRead(adminData.id);
-                }
-              }
+            if (isFromActive) {
+              playNotificationChime();
+              await markMessagesAsRead(activeContact.id);
             }
-          } else {
-            const activeGuest = selectedGuestRef.current;
-            const isFromActiveGuest = newMsg.sender_id === activeGuest?.id && newMsg.receiver_id === currentUser.id;
-            const isToActiveGuest = newMsg.sender_id === currentUser.id && newMsg.receiver_id === activeGuest?.id;
+          }
 
-            if (isFromActiveGuest || isToActiveGuest) {
-              setMessages((prev) => {
-                if (prev.some((m) => m.id === newMsg.id)) return prev;
-                return [...prev, newMsg];
-              });
-              
-              if (isFromActiveGuest) {
-                playNotificationChime();
-                await markMessagesAsRead(activeGuest.id);
-              }
-            }
-
-            if (newMsg.sender_id !== currentUser.id) {
-              setGuests((prevGuests) => {
-                const exists = prevGuests.some((g) => g.id === newMsg.sender_id);
-                if (exists) {
-                  const sender = prevGuests.find((g) => g.id === newMsg.sender_id);
-                  const rest = prevGuests.filter((g) => g.id !== newMsg.sender_id);
-                  return [sender, ...rest];
-                } else {
-                  fetchGuestProfile(newMsg.sender_id);
-                  return prevGuests;
-                }
-              });
-
-              if (!activeGuest || activeGuest.id !== newMsg.sender_id) {
-                setUnreadGuests((prev) => ({
-                  ...prev,
-                  [newMsg.sender_id]: true,
-                }));
-              }
+          if (newMsg.sender_id !== currentUser.id) {
+            if (!activeContact || activeContact.id !== newMsg.sender_id) {
+              setUnreadContacts((prev) => ({
+                ...prev,
+                [newMsg.sender_id]: true,
+              }));
             }
           }
         }
@@ -429,77 +452,30 @@ export default function ChatWindow({ currentUser, onLogout }) {
     };
   }, [currentUser, loading]);
 
-  const fetchGuestProfile = async (guestId) => {
-    try {
-      const { data } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', guestId)
-        .single();
-      
-      if (data) {
-        setGuests((prev) => {
-          if (prev.some((g) => g.id === data.id)) return prev;
-          return [data, ...prev];
-        });
-        setProfilesMap((prev) => ({
-          ...prev,
-          [data.id]: data.username,
-        }));
-      }
-    } catch (e) {
-      console.error('Error fetching dynamic guest profile:', e);
-    }
-  };
-
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const handleSelectGuest = async (guest) => {
-    setSelectedGuest(guest);
-    setUnreadGuests((prev) => ({
+  const handleSelectContact = async (contact) => {
+    setSelectedContact(contact);
+    setUnreadContacts((prev) => ({
       ...prev,
-      [guest.id]: false,
+      [contact.id]: false,
     }));
-    await loadMessages(currentUser.id, guest.id);
-    await markMessagesAsRead(guest.id);
+    await loadMessages(currentUser.id, contact.id);
+    await markMessagesAsRead(contact.id);
     if (typeof window !== 'undefined' && window.innerWidth < 768) {
       setIsSidebarOpen(false);
     }
   };
 
   const handleSendMessage = async (content, replyToId = null) => {
-    let receiverId = '';
-
-    if (role === 'guest') {
-      if (!adminProfile) {
-        const { data: freshAdmin } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('role', 'admin')
-          .maybeSingle();
-
-        if (freshAdmin) {
-          setAdminProfile(freshAdmin);
-          setProfilesMap((prev) => ({ ...prev, [freshAdmin.id]: freshAdmin.username }));
-          receiverId = freshAdmin.id;
-        } else {
-          alert('Admin belum tersedia. Silakan tunggu Admin melakukan setup.');
-          return;
-        }
-      } else {
-        receiverId = adminProfile.id;
-      }
-    } else {
-      if (!selectedGuest) return;
-      receiverId = selectedGuest.id;
-    }
+    if (!selectedContact) return;
 
     try {
       const payload = {
         sender_id: currentUser.id,
-        receiver_id: receiverId,
+        receiver_id: selectedContact.id,
         content: content,
         is_read: false
       };
@@ -605,24 +581,131 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  // Admin Pin / Unpin Guest
-  const handleTogglePinGuest = async (guestId, currentPinned, e) => {
-    e.stopPropagation();
-    const nextPinned = !currentPinned;
+  // Add Friend Logic
+  const handleOpenAddFriendModal = async () => {
+    setShowAddFriendModal(true);
+    setFriendSearchQuery('');
+    setSearchUsersResults([]);
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('*')
+        .neq('id', currentUser.id)
+        .eq('role', 'guest')
+        .limit(20);
+      
+      setSearchUsersResults(data || []);
+    } catch (err) {
+      console.error('Search users error:', err);
+    }
+  };
+
+  const handleSearchUsers = async (query) => {
+    setFriendSearchQuery(query);
+    if (!query.trim()) {
+      const { data } = await supabase
+        .from('profiles')
+        .select('*')
+        .neq('id', currentUser.id)
+        .eq('role', 'guest')
+        .limit(20);
+      setSearchUsersResults(data || []);
+      return;
+    }
+
+    try {
+      const { data } = await supabase
+        .from('profiles')
+        .select('*')
+        .neq('id', currentUser.id)
+        .eq('role', 'guest')
+        .ilike('username', `%${query.trim()}%`);
+
+      setSearchUsersResults(data || []);
+    } catch (err) {
+      console.error('Search error:', err);
+    }
+  };
+
+  const handleAddFriend = async (targetUser) => {
+    setAddingFriendId(targetUser.id);
     try {
       const { error } = await supabase
-        .from('profiles')
-        .update({ is_pinned: nextPinned })
-        .eq('id', guestId);
+        .from('friendships')
+        .upsert({
+          user_id: currentUser.id,
+          friend_id: targetUser.id,
+          status: 'accepted'
+        });
 
       if (error) throw error;
 
-      setGuests((prev) => {
-        const updated = prev.map((g) => (g.id === guestId ? { ...g, is_pinned: nextPinned } : g));
-        return updated.sort((a, b) => (b.is_pinned ? 1 : 0) - (a.is_pinned ? 1 : 0));
+      setFriendshipMap((prev) => ({ ...prev, [targetUser.id]: true }));
+      setContacts((prev) => {
+        if (prev.some((c) => c.id === targetUser.id)) return prev;
+        return [...prev, targetUser];
       });
+      setProfilesMap((prev) => ({ ...prev, [targetUser.id]: targetUser.username }));
+
+      setShowAddFriendModal(false);
+      handleSelectContact(targetUser);
     } catch (err) {
-      console.error('Pin error:', err);
+      console.error('Add friend error:', err);
+      alert('Gagal menambahkan teman: ' + err.message);
+    } finally {
+      setAddingFriendId(null);
+    }
+  };
+
+  // Save Settings Logic
+  const handleSaveProfileSettings = async (e) => {
+    e.preventDefault();
+    setSavingSettings(true);
+    setSettingsSuccess(false);
+
+    try {
+      const cleanUsername = editUsername.trim();
+      if (!cleanUsername) throw new Error('Username tidak boleh kosong.');
+
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          username: cleanUsername,
+          status_bio: editBio.trim(),
+          notify_sound: notifySound,
+          notify_push: notifyPush,
+          show_read_receipts: showReadReceipts,
+          show_online_status: showOnlineStatus
+        })
+        .eq('id', currentUser.id);
+
+      if (error) throw error;
+
+      setProfilesMap((prev) => ({ ...prev, [currentUser.id]: cleanUsername }));
+      setMyProfileData((prev) => ({
+        ...prev,
+        username: cleanUsername,
+        status_bio: editBio.trim(),
+        notify_sound: notifySound,
+        notify_push: notifyPush,
+        show_read_receipts: showReadReceipts,
+        show_online_status: showOnlineStatus
+      }));
+
+      // Request browser push notification permission if enabled
+      if (notifyPush && typeof window !== 'undefined' && 'Notification' in window) {
+        if (Notification.permission === 'default') {
+          await Notification.requestPermission();
+        }
+      }
+
+      setSettingsSuccess(true);
+      setTimeout(() => setSettingsSuccess(false), 3000);
+    } catch (err) {
+      console.error('Save settings error:', err);
+      alert('Gagal menyimpan profil: ' + err.message);
+    } finally {
+      setSavingSettings(false);
     }
   };
 
@@ -688,10 +771,10 @@ export default function ChatWindow({ currentUser, onLogout }) {
       if (error) throw error;
 
       setAllUsers((prev) => prev.filter((u) => u.id !== userId));
-      setGuests((prev) => prev.filter((g) => g.id !== userId));
+      setContacts((prev) => prev.filter((c) => c.id !== userId));
       
-      if (selectedGuest?.id === userId) {
-        setSelectedGuest(null);
+      if (selectedContact?.id === userId) {
+        setSelectedContact(null);
         setMessages([]);
       }
     } catch (err) {
@@ -718,16 +801,15 @@ export default function ChatWindow({ currentUser, onLogout }) {
     : messages;
 
   const pinnedMessageInChat = messages.find((m) => m.is_pinned_chat && !m.is_deleted);
-
-  const activeChatPartnerId = role === 'admin' ? selectedGuest?.id : adminProfile?.id;
-  const isPartnerTyping = activeChatPartnerId && typingUsers[activeChatPartnerId];
-  const isPartnerOnline = activeChatPartnerId && presenceMap[activeChatPartnerId]?.online;
+  const activePartnerId = selectedContact?.id;
+  const isPartnerTyping = activePartnerId && typingUsers[activePartnerId];
+  const isPartnerOnline = activePartnerId && presenceMap[activePartnerId]?.online;
 
   if (loading) {
     return (
       <div className="flex min-h-[100dvh] flex-col items-center justify-center bg-slate-950 text-slate-200">
         <RefreshCw className="h-8 w-8 animate-spin text-violet-500 mb-4" />
-        <p className="text-sm text-slate-400 animate-pulse">Memuat sesi real-time...</p>
+        <p className="text-sm text-slate-400 animate-pulse">Memuat obrolan & kontak...</p>
       </div>
     );
   }
@@ -773,35 +855,66 @@ export default function ChatWindow({ currentUser, onLogout }) {
       )}
 
       {/* Sidebar Backdrop Overlay for Mobile */}
-      {isSidebarOpen && role === 'admin' && (
+      {isSidebarOpen && (
         <div
           onClick={() => setIsSidebarOpen(false)}
           className="fixed inset-0 z-10 bg-black/60 backdrop-blur-sm transition-opacity duration-300 md:hidden"
         />
       )}
 
-      {/* Sidebar for Admin */}
-      {role === 'admin' && (
-        <div
-          className={`fixed inset-y-0 left-0 z-20 flex w-72 shrink-0 flex-col border-r border-white/5 bg-slate-900 transition-transform duration-300 md:static md:translate-x-0 ${
-            isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
-          }`}
-        >
-          {/* Sidebar Header */}
-          <div className="flex h-16 items-center justify-between border-b border-white/5 px-4 bg-slate-900/50">
-            <div className="flex items-center gap-2">
-              <Shield className="h-5 w-5 text-violet-500" />
-              <span className="font-bold tracking-wide text-sm bg-gradient-to-r from-violet-200 to-indigo-300 bg-clip-text text-transparent">Admin Dashboard</span>
+      {/* WhatsApp Style Sidebar (Rendered for ALL Users) */}
+      <div
+        className={`fixed inset-y-0 left-0 z-20 flex w-80 shrink-0 flex-col border-r border-white/5 bg-slate-900 transition-transform duration-300 md:static md:translate-x-0 ${
+          isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        {/* Sidebar Header */}
+        <div className="flex h-16 items-center justify-between border-b border-white/5 px-4 bg-slate-900/80 backdrop-blur-md">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowSettingsModal(true)}
+              className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-500 font-bold text-white shadow-md hover:scale-105 transition-transform"
+              title="Pengaturan Profil"
+            >
+              {myProfileData?.username?.charAt(0).toUpperCase() || 'U'}
+              <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-slate-900" />
+            </button>
+            <div className="overflow-hidden">
+              <h2 className="text-sm font-bold text-slate-100 truncate">{myProfileData?.username || 'User'}</h2>
+              <p className="text-[10px] text-slate-400 truncate">{myProfileData?.status_bio || 'Online'}</p>
             </div>
+          </div>
+
+          <div className="flex items-center gap-1">
+            {role === 'guest' && (
+              <button
+                onClick={handleOpenAddFriendModal}
+                className="rounded-xl border border-violet-500/20 bg-violet-500/10 p-2 text-violet-400 hover:bg-violet-500/20 transition-all"
+                title="Tambah Teman Baru"
+              >
+                <UserPlus className="h-4 w-4" />
+              </button>
+            )}
+
+            <button
+              onClick={() => setShowSettingsModal(true)}
+              className="rounded-xl p-2 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
+              title="Pengaturan Profil"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
+
             <button
               onClick={() => setIsSidebarOpen(false)}
-              className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white md:hidden"
+              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white md:hidden"
             >
               <X className="h-5 w-5" />
             </button>
           </div>
+        </div>
 
-          {/* Manage Users Button */}
+        {/* Admin User Management Button (Only for Admin) */}
+        {role === 'admin' && (
           <div className="p-3 border-b border-white/5">
             <button
               onClick={openUserManagement}
@@ -811,69 +924,83 @@ export default function ChatWindow({ currentUser, onLogout }) {
               Kelola User & Statistik
             </button>
           </div>
+        )}
 
-          {/* Guest List */}
-          <div className="flex-1 overflow-y-auto p-3 space-y-1">
-            <h3 className="px-2 mb-3 text-[10px] font-bold uppercase tracking-wider text-slate-500">Chat Aktif</h3>
-            {guests.length === 0 ? (
-              <div className="flex flex-col items-center justify-center p-8 text-center text-slate-600">
-                <MessageSquare className="h-8 w-8 mb-2 opacity-30" />
-                <p className="text-xs">Belum ada chat aktif</p>
-              </div>
-            ) : (
-              guests.map((g) => {
-                const isSelected = selectedGuest?.id === g.id;
-                const hasUnread = unreadGuests[g.id];
-                const isGuestTyping = typingUsers[g.id];
-                const isGuestOnline = presenceMap[g.id]?.online;
-
-                return (
-                  <button
-                    key={g.id}
-                    onClick={() => handleSelectGuest(g)}
-                    className={`group/guest relative flex w-full items-center gap-3 rounded-xl p-3 text-left transition-all duration-200 ${
-                      isSelected
-                        ? 'bg-gradient-to-r from-violet-600/30 to-indigo-600/20 border border-violet-500/20 text-white shadow-md'
-                        : 'bg-slate-900/30 border border-transparent hover:bg-slate-800/50 text-slate-300 hover:text-slate-100'
-                    }`}
-                  >
-                    <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-slate-800 to-slate-700 font-bold text-violet-400">
-                      {g.username.charAt(0).toUpperCase()}
-                      {isGuestOnline && (
-                        <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-slate-900" />
-                      )}
-                      {hasUnread && (
-                        <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-3 w-3 bg-violet-500"></span>
-                        </span>
-                      )}
-                    </div>
-                    <div className="overflow-hidden flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-1">
-                        <p className="truncate text-sm font-semibold">{g.username}</p>
-                        {g.is_pinned && <Pin className="h-3 w-3 text-amber-400 fill-amber-400 shrink-0" />}
-                      </div>
-                      <p className={`truncate text-[10px] ${isGuestTyping ? 'text-emerald-400 font-medium animate-pulse' : 'text-slate-500'}`}>
-                        {isGuestTyping ? 'sedang mengetik...' : (isGuestOnline ? 'Online' : 'Guest User')}
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={(e) => handleTogglePinGuest(g.id, g.is_pinned, e)}
-                      className="hidden group-hover/guest:flex p-1.5 text-slate-400 hover:text-amber-400 transition-colors"
-                      title={g.is_pinned ? 'Lepas Pin' : 'Sematkan Chat'}
-                    >
-                      <Pin className={`h-3.5 w-3.5 ${g.is_pinned ? 'fill-amber-400 text-amber-400' : ''}`} />
-                    </button>
-                  </button>
-                );
-              })
+        {/* Contacts / Conversations List */}
+        <div className="flex-1 overflow-y-auto p-3 space-y-1">
+          <div className="flex items-center justify-between px-2 mb-3">
+            <h3 className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Daftar Chat</h3>
+            {role === 'guest' && (
+              <button
+                onClick={handleOpenAddFriendModal}
+                className="text-[10px] font-semibold text-violet-400 hover:underline flex items-center gap-1"
+              >
+                <UserPlus className="h-3 w-3" /> Tambah
+              </button>
             )}
           </div>
+
+          {contacts.length === 0 ? (
+            <div className="flex flex-col items-center justify-center p-8 text-center text-slate-600 space-y-3">
+              <MessageSquare className="h-8 w-8 opacity-30" />
+              <p className="text-xs">Belum ada teman terdaftar.</p>
+              {role === 'guest' && (
+                <button
+                  onClick={handleOpenAddFriendModal}
+                  className="rounded-xl bg-violet-600 px-3 py-1.5 text-xs font-bold text-white shadow-md hover:bg-violet-500 transition-colors"
+                >
+                  Cari & Tambahkan Teman
+                </button>
+              )}
+            </div>
+          ) : (
+            contacts.map((contact) => {
+              const isSelected = selectedContact?.id === contact.id;
+              const hasUnread = unreadContacts[contact.id];
+              const isContactTyping = typingUsers[contact.id];
+              const isContactOnline = presenceMap[contact.id]?.online;
+
+              return (
+                <button
+                  key={contact.id}
+                  onClick={() => handleSelectContact(contact)}
+                  className={`group/contact relative flex w-full items-center gap-3 rounded-xl p-3 text-left transition-all duration-200 ${
+                    isSelected
+                      ? 'bg-gradient-to-r from-violet-600/30 to-indigo-600/20 border border-violet-500/20 text-white shadow-md'
+                      : 'bg-slate-900/30 border border-transparent hover:bg-slate-800/50 text-slate-300 hover:text-slate-100'
+                  }`}
+                >
+                  <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-slate-800 to-slate-700 font-bold text-violet-400">
+                    {contact.username.charAt(0).toUpperCase()}
+                    {isContactOnline && (
+                      <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-slate-900" />
+                    )}
+                    {hasUnread && (
+                      <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span>
+                        <span className="relative inline-flex rounded-full h-3 w-3 bg-violet-500"></span>
+                      </span>
+                    )}
+                  </div>
+                  <div className="overflow-hidden flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-1">
+                      <p className="truncate text-sm font-semibold flex items-center gap-1.5">
+                        {contact.username}
+                        {contact.role === 'admin' && (
+                          <span className="rounded bg-violet-500/20 px-1.5 py-0.2 text-[9px] font-bold text-violet-300 uppercase">Admin</span>
+                        )}
+                      </p>
+                    </div>
+                    <p className={`truncate text-[10px] ${isContactTyping ? 'text-emerald-400 font-medium animate-pulse' : 'text-slate-500'}`}>
+                      {isContactTyping ? 'sedang mengetik...' : (isContactOnline ? 'Online' : (contact.status_bio || 'User'))}
+                    </p>
+                  </div>
+                </button>
+              );
+            })
+          )}
         </div>
-      )}
+      </div>
 
       {/* Main Chat Area */}
       <div className="flex h-full flex-1 flex-col bg-slate-950 relative overflow-hidden">
@@ -889,20 +1016,15 @@ export default function ChatWindow({ currentUser, onLogout }) {
         {/* Chat Window Top Bar */}
         <header className="flex h-16 shrink-0 items-center justify-between border-b border-white/5 bg-slate-900/40 px-4 md:px-6 backdrop-blur-md">
           <div className="flex items-center gap-3 flex-1 min-w-0">
-            {role === 'admin' && (
-              <button
-                onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                className="mr-1 rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white md:hidden"
-              >
-                <Menu className="h-5 w-5" />
-              </button>
-            )}
+            <button
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className="mr-1 rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white md:hidden"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
 
             <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-500 font-bold text-white shadow-md">
-              {role === 'admin' 
-                ? (selectedGuest ? selectedGuest.username.charAt(0).toUpperCase() : 'A')
-                : (adminProfile ? adminProfile.username.charAt(0).toUpperCase() : 'G')
-              }
+              {selectedContact ? selectedContact.username.charAt(0).toUpperCase() : 'C'}
               {isPartnerOnline && (
                 <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-slate-950" />
               )}
@@ -910,10 +1032,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
             <div className="flex-1 min-w-0">
               <h2 className="text-sm font-bold text-slate-100 truncate">
-                {role === 'admin'
-                  ? (selectedGuest ? selectedGuest.username : 'Pilih Chat')
-                  : (adminProfile ? adminProfile.username : 'Support Admin')
-                }
+                {selectedContact ? selectedContact.username : 'Pilih Obrolan'}
               </h2>
               <p className="text-[10px] text-slate-400 flex items-center gap-1.5">
                 {isPartnerTyping ? (
@@ -924,9 +1043,9 @@ export default function ChatWindow({ currentUser, onLogout }) {
                 ) : (
                   <>
                     <span className={`h-1.5 w-1.5 rounded-full ${isPartnerOnline ? 'bg-emerald-500 animate-pulse' : 'bg-slate-600'}`}></span>
-                    {role === 'admin' 
-                      ? (selectedGuest ? (isPartnerOnline ? 'Online' : 'Offline') : 'Dashboard Aktif')
-                      : (adminProfile ? (isPartnerOnline ? 'Online' : 'Support Available') : 'Menunggu Admin...')
+                    {selectedContact 
+                      ? (isPartnerOnline ? 'Online' : (selectedContact.status_bio || 'Offline'))
+                      : 'Pilih teman atau Support Admin'
                     }
                   </>
                 )}
@@ -966,9 +1085,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
               </button>
             )}
 
-            <span className="hidden select-none rounded-full border border-violet-500/20 bg-violet-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-violet-400 md:inline-block">
-              {role === 'admin' ? 'Admin' : profilesMap[currentUser.id] || 'User'}
-            </span>
             <button
               onClick={onLogout}
               className="flex items-center justify-center rounded-xl border border-white/5 bg-slate-900 hover:bg-rose-950/20 hover:border-rose-900/30 p-2.5 text-slate-400 hover:text-rose-400 transition-all duration-200"
@@ -1008,22 +1124,22 @@ export default function ChatWindow({ currentUser, onLogout }) {
             </div>
           )}
 
-          {role === 'admin' && !selectedGuest ? (
+          {!selectedContact ? (
             <div className="flex h-full flex-col items-center justify-center text-center">
               <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-900 text-slate-600">
                 <MessageSquare className="h-8 w-8" />
               </div>
               <h3 className="text-base font-bold text-slate-300">Belum Ada Chat Dipilih</h3>
               <p className="mt-1 max-w-xs text-xs text-slate-500">
-                Pilih guest dari sidebar kiri untuk mulai membaca dan membalas pesan.
+                Pilih teman atau Support Admin dari daftar di sebelah kiri untuk mulai mengobrol.
               </p>
             </div>
           ) : (
             <>
               {filteredMessages.length === 0 ? (
-                <div className="flex h-full flex-col items-center justify-center text-center text-slate-600">
+                <div className="flex h-full flex-col items-center justify-center text-center text-slate-600 space-y-2">
                   <p className="text-xs">
-                    {searchQuery ? 'Tidak ada pesan yang cocok dengan pencarian.' : 'Belum ada pesan. Kirim pesan untuk memulai percakapan!'}
+                    {searchQuery ? 'Tidak ada pesan yang cocok dengan pencarian.' : 'Belum ada pesan. Kirim pesan pertama untuk memulai obrolan!'}
                   </p>
                 </div>
               ) : (
@@ -1070,16 +1186,223 @@ export default function ChatWindow({ currentUser, onLogout }) {
         </div>
 
         {/* Chat input */}
-        {((role === 'admin' && selectedGuest) || role === 'guest') && (
+        {selectedContact && (
           <MessageInput
             onSendMessage={handleSendMessage}
             onTypingChange={handleTypingChange}
-            disabled={isOffline || (role === 'guest' && !adminProfile)}
+            disabled={isOffline}
             replyingTo={replyingTo}
             onCancelReply={() => setReplyingTo(null)}
           />
         )}
       </div>
+
+      {/* Add Friend Search Modal */}
+      {showAddFriendModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-md flex flex-col rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl overflow-hidden animate-zoom-in">
+            <div className="flex items-center justify-between border-b border-white/5 px-5 py-4">
+              <div className="flex items-center gap-2.5">
+                <UserPlus className="h-5 w-5 text-violet-400" />
+                <h3 className="text-sm font-bold text-slate-100">Tambah Teman Baru</h3>
+              </div>
+              <button
+                onClick={() => setShowAddFriendModal(false)}
+                className="rounded-lg p-1.5 text-slate-400 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-3 h-4 w-4 text-slate-500" />
+                <input
+                  type="text"
+                  placeholder="Cari username user lain..."
+                  value={friendSearchQuery}
+                  onChange={(e) => handleSearchUsers(e.target.value)}
+                  className="w-full rounded-xl border border-white/10 bg-slate-950 py-2.5 pl-9 pr-4 text-xs text-slate-200 outline-none focus:border-violet-500"
+                  autoFocus
+                />
+              </div>
+
+              <div className="max-h-60 overflow-y-auto space-y-2">
+                {searchUsersResults.length === 0 ? (
+                  <p className="p-4 text-center text-xs text-slate-500">Tidak ada user ditemukan.</p>
+                ) : (
+                  searchUsersResults.map((u) => {
+                    const isAlreadyFriend = friendshipMap[u.id];
+                    return (
+                      <div
+                        key={u.id}
+                        className="flex items-center justify-between rounded-xl border border-white/5 bg-slate-950/60 p-3"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-600/20 text-violet-400 font-bold text-sm">
+                            {u.username.charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <p className="text-xs font-bold text-slate-200">{u.username}</p>
+                            <p className="text-[10px] text-slate-500">{u.status_bio || 'Guest User'}</p>
+                          </div>
+                        </div>
+
+                        {isAlreadyFriend ? (
+                          <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg">
+                            <UserCheck className="h-3 w-3" /> Teman
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => handleAddFriend(u)}
+                            disabled={addingFriendId === u.id}
+                            className="flex items-center gap-1 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-bold text-white shadow-md hover:bg-violet-500 transition-colors disabled:opacity-50"
+                          >
+                            {addingFriendId === u.id ? (
+                              <RefreshCw className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <>
+                                <UserPlus className="h-3 w-3" /> Tambah
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* User Profile & Settings Modal */}
+      {showSettingsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl overflow-hidden animate-zoom-in">
+            <div className="flex items-center justify-between border-b border-white/5 px-6 py-4">
+              <div className="flex items-center gap-2.5">
+                <Settings className="h-5 w-5 text-violet-400" />
+                <h3 className="text-sm font-bold text-slate-100">Pengaturan Profil & Privasi</h3>
+              </div>
+              <button
+                onClick={() => setShowSettingsModal(false)}
+                className="rounded-lg p-1.5 text-slate-400 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveProfileSettings} className="p-6 space-y-4">
+              {settingsSuccess && (
+                <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-3 text-xs text-emerald-300">
+                  <Check className="h-4 w-4 shrink-0" />
+                  <span>Pengaturan profil berhasil disimpan!</span>
+                </div>
+              )}
+
+              {/* Username Input */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-400">Username</label>
+                <input
+                  type="text"
+                  value={editUsername}
+                  onChange={(e) => setEditUsername(e.target.value)}
+                  className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-slate-200 outline-none focus:border-violet-500"
+                />
+              </div>
+
+              {/* Bio / Status Input */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-slate-400">Bio Status</label>
+                <input
+                  type="text"
+                  value={editBio}
+                  onChange={(e) => setEditBio(e.target.value)}
+                  className="w-full rounded-xl border border-white/10 bg-slate-950 px-3.5 py-2.5 text-xs text-slate-200 outline-none focus:border-violet-500"
+                />
+              </div>
+
+              {/* Notification Toggles */}
+              <div className="border-t border-white/5 pt-3 space-y-3">
+                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Perizinan Notifikasi</h4>
+
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs text-slate-300">
+                    <Volume2 className="h-4 w-4 text-violet-400" />
+                    <span>Suara Notifikasi Chat</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={notifySound}
+                    onChange={(e) => setNotifySound(e.target.checked)}
+                    className="h-4 w-4 rounded accent-violet-600"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs text-slate-300">
+                    <Bell className="h-4 w-4 text-violet-400" />
+                    <span>Push Notification Browser</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={notifyPush}
+                    onChange={(e) => setNotifyPush(e.target.checked)}
+                    className="h-4 w-4 rounded accent-violet-600"
+                  />
+                </div>
+              </div>
+
+              {/* Privacy Toggles */}
+              <div className="border-t border-white/5 pt-3 space-y-3">
+                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Privasi & Keamanan</h4>
+
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs text-slate-300">
+                    <Check className="h-4 w-4 text-violet-400" />
+                    <span>Tampilkan Centang Dibaca (✓✓)</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={showReadReceipts}
+                    onChange={(e) => setShowReadReceipts(e.target.checked)}
+                    className="h-4 w-4 rounded accent-violet-600"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs text-slate-300">
+                    <Eye className="h-4 w-4 text-violet-400" />
+                    <span>Tampilkan Status Online</span>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={showOnlineStatus}
+                    onChange={(e) => setShowOnlineStatus(e.target.checked)}
+                    className="h-4 w-4 rounded accent-violet-600"
+                  />
+                </div>
+              </div>
+
+              <div className="border-t border-white/5 pt-4 flex justify-end">
+                <button
+                  type="submit"
+                  disabled={savingSettings}
+                  className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 px-5 py-2.5 text-xs font-bold text-white shadow-md hover:scale-105 transition-all disabled:opacity-50"
+                >
+                  {savingSettings ? (
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                  ) : (
+                    'Simpan Pengaturan'
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Admin User Management & Analytics Modal */}
       {showUserModal && (
@@ -1190,7 +1513,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
                     <div className="flex items-center justify-end gap-1.5 shrink-0 border-t border-white/5 pt-3 md:border-t-0 md:pt-0">
                       <button
                         onClick={() => {
-                          handleSelectGuest(user);
+                          handleSelectContact(user);
                           setShowUserModal(false);
                         }}
                         className="flex h-9 w-9 items-center justify-center rounded-lg border border-violet-500/20 bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 hover:text-violet-300 transition-all duration-200"
