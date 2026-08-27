@@ -1,7 +1,7 @@
 'use client';
 
-import React from 'react';
-import { FileText, Download, ExternalLink } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { FileText, Download, ExternalLink, Play, Pause, Reply, CornerDownRight, Smile } from 'lucide-react';
 
 function sanitizeForDisplay(str) {
   if (typeof str !== 'string') return '';
@@ -13,11 +13,19 @@ function sanitizeForDisplay(str) {
 }
 
 function parseMessageContent(rawContent) {
-  if (typeof rawContent !== 'string') return { text: '', image: null, file: null };
+  if (typeof rawContent !== 'string') return { text: '', image: null, file: null, audio: null };
 
   let text = rawContent;
   let image = null;
   let file = null;
+  let audio = null;
+
+  // Check for audio marker: [audio:URL]
+  const audioMatch = text.match(/\[audio:(https?:\/\/[^\]]+)\]/);
+  if (audioMatch) {
+    audio = audioMatch[1];
+    text = text.replace(audioMatch[0], '').trim();
+  }
 
   // Check for image marker: [image:URL]
   const imageMatch = text.match(/\[image:(https?:\/\/[^\]]+)\]/);
@@ -33,13 +41,28 @@ function parseMessageContent(rawContent) {
     text = text.replace(fileMatch[0], '').trim();
   }
 
-  return { text: sanitizeForDisplay(text), image, file };
+  return { text: sanitizeForDisplay(text), image, file, audio };
 }
 
-export default function MessageBubble({ message, isSelf, senderName }) {
+const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
+
+export default function MessageBubble({
+  message,
+  isSelf,
+  senderName,
+  quotedMessage,
+  reactions = [],
+  onReact,
+  onReply
+}) {
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [audioProgress, setAudioProgress] = useState(0);
+  const [showReactionPicker, setShowReactionPicker] = useState(false);
+  const audioRef = useRef(null);
+
   if (!message || typeof message.content !== 'string') return null;
 
-  const { text, image, file } = parseMessageContent(message.content);
+  const { text, image, file, audio } = parseMessageContent(message.content);
   const safeSenderName = sanitizeForDisplay(senderName || 'Anonymous').slice(0, 50);
 
   const formatTime = (isoString) => {
@@ -53,12 +76,46 @@ export default function MessageBubble({ message, isSelf, senderName }) {
     }
   };
 
+  const toggleAudio = () => {
+    if (!audioRef.current) return;
+    if (isPlayingAudio) {
+      audioRef.current.pause();
+      setIsPlayingAudio(false);
+    } else {
+      audioRef.current.play();
+      setIsPlayingAudio(true);
+    }
+  };
+
+  const handleAudioTimeUpdate = () => {
+    if (audioRef.current) {
+      const progress = (audioRef.current.currentTime / audioRef.current.duration) * 100;
+      setAudioProgress(progress || 0);
+    }
+  };
+
+  const handleAudioEnded = () => {
+    setIsPlayingAudio(false);
+    setAudioProgress(0);
+  };
+
+  // Group reactions by emoji: { '👍': { count: 2, hasMine: true/false } }
+  const reactionCounts = reactions.reduce((acc, r) => {
+    if (!acc[r.emoji]) {
+      acc[r.emoji] = { count: 0, hasMine: false };
+    }
+    acc[r.emoji].count += 1;
+    if (r.isMine) acc[r.emoji].hasMine = true;
+    return acc;
+  }, {});
+
   return (
     <div
-      className={`flex w-full mb-3.5 animate-in fade-in slide-in-from-bottom-2 duration-200 ${
-        isSelf ? 'justify-end' : 'justify-start'
+      className={`group relative flex w-full mb-5 animate-in fade-in slide-in-from-bottom-2 duration-200 items-end gap-2 ${
+        isSelf ? 'flex-row-reverse' : 'flex-row'
       }`}
     >
+      {/* Main Message Bubble Container */}
       <div
         className={`relative max-w-[85%] sm:max-w-[75%] md:max-w-[60%] rounded-2xl p-3.5 shadow-md transition-all duration-300 ${
           isSelf
@@ -66,30 +123,110 @@ export default function MessageBubble({ message, isSelf, senderName }) {
             : 'rounded-tl-none bg-slate-800 text-slate-100 border border-slate-700/50 shadow-slate-950/10'
         }`}
       >
-        {/* Sender Name */}
-        {!isSelf && (
-          <span className="block text-xs font-bold text-violet-400 mb-1.5 select-none tracking-wide">
-            {safeSenderName}
-          </span>
+        {/* Emoji Reaction Popover Picker */}
+        {showReactionPicker && (
+          <div
+            className={`absolute z-40 flex items-center gap-1.5 rounded-full border border-white/10 bg-slate-900/95 px-3 py-1.5 shadow-2xl backdrop-blur-xl animate-zoom-in ${
+              isSelf ? '-top-10 right-0' : '-top-10 left-0'
+            }`}
+          >
+            {REACTION_EMOJIS.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                onClick={() => {
+                  onReact(message.id, emoji);
+                  setShowReactionPicker(false);
+                }}
+                className="text-lg hover:scale-130 transition-transform"
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
         )}
 
-        {/* Image Attachment Rendering */}
+        {/* Sender Name & Inline Header Actions */}
+        <div className="flex items-center justify-between gap-2 mb-1.5 select-none">
+          {!isSelf ? (
+            <span className="block text-xs font-bold text-violet-400 tracking-wide">
+              {safeSenderName}
+            </span>
+          ) : (
+            <span />
+          )}
+
+          {/* Quick inline reply button inside bubble for clear access */}
+          {onReply && (
+            <button
+              type="button"
+              onClick={() => onReply(message)}
+              className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-semibold text-white/50 hover:bg-white/10 hover:text-white transition-all"
+              title="Balas pesan ini"
+            >
+              <Reply className="h-3 w-3" />
+              <span>Balas</span>
+            </button>
+          )}
+        </div>
+
+        {/* Quoted Reply Container */}
+        {quotedMessage && (
+          <div className="mb-2.5 flex items-center gap-2.5 rounded-xl border border-white/10 bg-black/25 p-2.5 text-xs border-l-4 border-l-violet-400 backdrop-blur-sm">
+            <CornerDownRight className="h-4 w-4 text-violet-400 shrink-0" />
+            <div className="overflow-hidden">
+              <span className="font-bold text-violet-300 block text-[11px] mb-0.5">{quotedMessage.senderName}</span>
+              <p className="truncate text-slate-300 text-xs italic">{quotedMessage.content}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Voice Note Audio Player */}
+        {audio && (
+          <div className="mb-2 flex items-center gap-3 rounded-xl border border-white/10 bg-slate-950/40 p-3 min-w-[200px]">
+            <audio
+              ref={audioRef}
+              src={audio}
+              onTimeUpdate={handleAudioTimeUpdate}
+              onEnded={handleAudioEnded}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={toggleAudio}
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-500 text-white shadow-md hover:scale-105 transition-transform"
+            >
+              {isPlayingAudio ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 ml-0.5" />}
+            </button>
+            <div className="flex-1">
+              <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
+                <div
+                  className="h-full bg-gradient-to-r from-violet-400 to-indigo-400 transition-all"
+                  style={{ width: `${audioProgress}%` }}
+                />
+              </div>
+              <span className="text-[10px] font-mono text-slate-400 mt-1 block">Voice Note</span>
+            </div>
+          </div>
+        )}
+
+        {/* Image Attachment */}
         {image && (
           <div className="mb-2 overflow-hidden rounded-xl border border-white/10 bg-black/20">
             <a
               href={image}
               target="_blank"
               rel="noopener noreferrer"
-              className="group relative block overflow-hidden"
-              title="Klik untuk membuka gambar ukuran penuh"
+              className="group/img relative block overflow-hidden"
+              title="Buka gambar ukuran penuh"
             >
               <img
                 src={image}
                 alt="Lampiran Gambar"
-                className="max-h-64 w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                className="max-h-64 w-full object-cover transition-transform duration-300 group-hover/img:scale-105"
                 loading="lazy"
               />
-              <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+              <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity duration-200">
                 <span className="flex items-center gap-1.5 rounded-lg bg-black/60 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur-md">
                   <ExternalLink className="h-3.5 w-3.5" />
                   Buka Gambar
@@ -99,7 +236,7 @@ export default function MessageBubble({ message, isSelf, senderName }) {
           </div>
         )}
 
-        {/* Document/File Attachment Rendering */}
+        {/* Document/File Attachment */}
         {file && (
           <div className="mb-2 flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-slate-950/40 p-3">
             <div className="flex items-center gap-2.5 overflow-hidden">
@@ -130,7 +267,7 @@ export default function MessageBubble({ message, isSelf, senderName }) {
           </p>
         )}
 
-        {/* Timestamp & Read Receipts (Ticks) */}
+        {/* Timestamp & Read Receipts */}
         <div
           className={`absolute bottom-1 right-2 flex items-center gap-1 text-[10px] select-none font-medium ${
             isSelf ? 'text-white/60' : 'text-slate-500'
@@ -146,7 +283,38 @@ export default function MessageBubble({ message, isSelf, senderName }) {
             </span>
           )}
         </div>
+
+        {/* Reaction Counter Badges Container */}
+        {Object.keys(reactionCounts).length > 0 && (
+          <div className="absolute -bottom-3.5 left-3 flex items-center gap-1 z-10">
+            {Object.entries(reactionCounts).map(([emoji, { count, hasMine }]) => (
+              <button
+                key={emoji}
+                type="button"
+                onClick={() => onReact(message.id, emoji)}
+                className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-xs border shadow-sm transition-all ${
+                  hasMine
+                    ? 'bg-violet-600 border-violet-400 text-white font-bold'
+                    : 'bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800'
+                }`}
+              >
+                <span>{emoji}</span>
+                <span className="text-[10px]">{count}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
+
+      {/* External Action Button (Smile Emoji Trigger next to bubble) */}
+      <button
+        type="button"
+        onClick={() => setShowReactionPicker(!showReactionPicker)}
+        className="opacity-60 hover:opacity-100 p-1.5 text-slate-400 hover:text-amber-400 transition-all rounded-full hover:bg-white/5 shrink-0 mb-1"
+        title="Beri reaksi emoji"
+      >
+        <Smile className="h-4 w-4" />
+      </button>
     </div>
   );
 }

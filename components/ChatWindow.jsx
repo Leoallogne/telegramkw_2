@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import MessageBubble from './MessageBubble';
 import MessageInput from './MessageInput';
-import { LogOut, MessageSquare, Menu, X, Shield, RefreshCw, Users, Eye, EyeOff, Trash2, AlertTriangle, WifiOff, KeyRound, Check } from 'lucide-react';
+import { LogOut, MessageSquare, Menu, X, Shield, RefreshCw, Users, Eye, EyeOff, Trash2, AlertTriangle, WifiOff, KeyRound, Check, Search, Pin } from 'lucide-react';
 
 export default function ChatWindow({ currentUser, onLogout }) {
   const [role, setRole] = useState('guest');
@@ -20,15 +20,25 @@ export default function ChatWindow({ currentUser, onLogout }) {
   const [showUserModal, setShowUserModal] = useState(false);
   const [allUsers, setAllUsers] = useState([]);
   const [deletingUser, setDeletingUser] = useState(null);
-  const [resetPasswords, setResetPasswords] = useState({}); // { userId: string }
+  const [resetPasswords, setResetPasswords] = useState({});
   const [resettingUser, setResettingUser] = useState(null);
-  const [resetSuccess, setResetSuccess] = useState({}); // { userId: boolean }
+  const [resetSuccess, setResetSuccess] = useState({});
+
+  // Search Bar & Filter State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showSearch, setShowSearch] = useState(false);
+
+  // Reply State
+  const [replyingTo, setReplyingTo] = useState(null);
+
+  // Reactions State: { [messageId]: [ { id, message_id, user_id, emoji, isMine: boolean } ] }
+  const [reactionsMap, setReactionsMap] = useState({});
 
   // Offline status state
   const [isOffline, setIsOffline] = useState(typeof window !== 'undefined' ? !navigator.onLine : false);
 
   // Real-time Typing Status state
-  const [typingUsers, setTypingUsers] = useState({}); // { userId: boolean }
+  const [typingUsers, setTypingUsers] = useState({});
 
   // General Chat state
   const [messages, setMessages] = useState([]);
@@ -47,7 +57,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
   roleRef.current = role;
   const channelRef = useRef(null);
 
-  // Close sidebar by default on mobile devices on mount
   useEffect(() => {
     if (typeof window !== 'undefined' && window.innerWidth < 768) {
       setIsSidebarOpen(false);
@@ -153,6 +162,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
         .from('profiles')
         .select('*')
         .eq('role', 'guest')
+        .order('is_pinned', { ascending: false })
         .order('created_at', { ascending: false });
 
       if (guestErr) throw guestErr;
@@ -182,12 +192,39 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
       if (msgErr) throw msgErr;
       setMessages(data || []);
+
+      if (data && data.length > 0) {
+        await loadReactions(data.map((m) => m.id));
+      }
     } catch (err) {
       console.error('Error loading messages:', err);
     }
   };
 
-  // Helper to mark messages as read
+  const loadReactions = async (messageIds) => {
+    if (!messageIds || messageIds.length === 0) return;
+    try {
+      const { data, error } = await supabase
+        .from('message_reactions')
+        .select('*')
+        .in('message_id', messageIds);
+
+      if (error) throw error;
+
+      const map = {};
+      data?.forEach((r) => {
+        if (!map[r.message_id]) map[r.message_id] = [];
+        map[r.message_id].push({
+          ...r,
+          isMine: r.user_id === currentUser.id
+        });
+      });
+      setReactionsMap(map);
+    } catch (err) {
+      console.error('Error loading reactions:', err);
+    }
+  };
+
   const markMessagesAsRead = async (partnerId) => {
     if (!partnerId) return;
     try {
@@ -209,55 +246,13 @@ export default function ChatWindow({ currentUser, onLogout }) {
     profilesMapRef.current = profilesMap;
   }, [profilesMap]);
 
-  // Request browser notification permission
-  useEffect(() => {
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      if (Notification.permission === 'default') {
-        Notification.requestPermission();
-      }
-    }
-  }, []);
-
-  // Notification trigger helper
-  const triggerNotification = (senderId, content) => {
-    if (
-      typeof window !== 'undefined' &&
-      'Notification' in window &&
-      Notification.permission === 'granted'
-    ) {
-      if (document.hidden || !document.hasFocus()) {
-        const senderName = profilesMapRef.current[senderId] || 'User';
-        const title = `Pesan dari ${senderName}`;
-        const options = {
-          body: content,
-          icon: '/favicon.ico',
-          tag: 'guest-admin-chat',
-          renotify: true,
-        };
-
-        if ('serviceWorker' in navigator) {
-          navigator.serviceWorker.ready
-            .then((reg) => {
-              reg.showNotification(title, options);
-            })
-            .catch(() => {
-              new Notification(title, options);
-            });
-        } else {
-          new Notification(title, options);
-        }
-      }
-    }
-  };
-
-  // 2. Realtime Messages & Broadcast Subscription Setup
+  // 2. Realtime Messages & Reactions Subscription Setup
   useEffect(() => {
     if (!currentUser || loading) return;
 
     const channel = supabase
       .channel('messages-room-channel')
       
-      // Listen to new messages
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'messages' },
@@ -278,7 +273,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
                 if (isAdminMsg) {
                   await markMessagesAsRead(adminData.id);
-                  triggerNotification(newMsg.sender_id, newMsg.content);
                 }
               }
             }
@@ -317,14 +311,11 @@ export default function ChatWindow({ currentUser, onLogout }) {
                   [newMsg.sender_id]: true,
                 }));
               }
-
-              triggerNotification(newMsg.sender_id, newMsg.content);
             }
           }
         }
       )
-      
-      // Listen to message updates (for ticks / read status updates)
+
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'messages' },
@@ -335,8 +326,35 @@ export default function ChatWindow({ currentUser, onLogout }) {
           );
         }
       )
-      
-      // Listen to Realtime Broadcast typing events
+
+      // Listen to Postgres Reactions Insert/Delete events
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'message_reactions' },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            const r = payload.new;
+            setReactionsMap((prev) => {
+              const list = prev[r.message_id] || [];
+              if (list.some((item) => item.id === r.id)) return prev;
+              return {
+                ...prev,
+                [r.message_id]: [...list, { ...r, isMine: r.user_id === currentUser.id }]
+              };
+            });
+          } else if (payload.eventType === 'DELETE') {
+            const oldR = payload.old;
+            setReactionsMap((prev) => {
+              const list = prev[oldR.message_id] || [];
+              return {
+                ...prev,
+                [oldR.message_id]: list.filter((item) => item.id !== oldR.id)
+              };
+            });
+          }
+        }
+      )
+
       .on('broadcast', { event: 'typing' }, (payload) => {
         const { userId, isTyping } = payload.payload;
         setTypingUsers((prev) => ({
@@ -377,7 +395,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  // Scroll to bottom on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -395,7 +412,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  const handleSendMessage = async (content) => {
+  const handleSendMessage = async (content, replyToId = null) => {
     let receiverId = '';
 
     if (role === 'guest') {
@@ -423,13 +440,18 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
 
     try {
-      const { error: sendErr } = await supabase.from('messages').insert({
+      const payload = {
         sender_id: currentUser.id,
         receiver_id: receiverId,
         content: content,
         is_read: false
-      });
+      };
 
+      if (replyToId) {
+        payload.reply_to_id = replyToId;
+      }
+
+      const { error: sendErr } = await supabase.from('messages').insert(payload);
       if (sendErr) throw sendErr;
     } catch (err) {
       console.error('Send error:', err);
@@ -437,7 +459,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  // Broadcast typing status change
   const handleTypingChange = (isTyping) => {
     if (channelRef.current) {
       channelRef.current.send({
@@ -445,6 +466,52 @@ export default function ChatWindow({ currentUser, onLogout }) {
         event: 'typing',
         payload: { userId: currentUser.id, isTyping }
       });
+    }
+  };
+
+  // Toggle Emoji Reaction on a message
+  const handleToggleReaction = async (messageId, emoji) => {
+    const existingList = reactionsMap[messageId] || [];
+    const myReaction = existingList.find((r) => r.user_id === currentUser.id && r.emoji === emoji);
+
+    try {
+      if (myReaction) {
+        await supabase
+          .from('message_reactions')
+          .delete()
+          .eq('id', myReaction.id);
+      } else {
+        await supabase
+          .from('message_reactions')
+          .insert({
+            message_id: messageId,
+            user_id: currentUser.id,
+            emoji: emoji
+          });
+      }
+    } catch (err) {
+      console.error('Error toggling reaction:', err);
+    }
+  };
+
+  // Admin Pin / Unpin Guest
+  const handleTogglePinGuest = async (guestId, currentPinned, e) => {
+    e.stopPropagation();
+    const nextPinned = !currentPinned;
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ is_pinned: nextPinned })
+        .eq('id', guestId);
+
+      if (error) throw error;
+
+      setGuests((prev) => {
+        const updated = prev.map((g) => (g.id === guestId ? { ...g, is_pinned: nextPinned } : g));
+        return updated.sort((a, b) => (b.is_pinned ? 1 : 0) - (a.is_pinned ? 1 : 0));
+      });
+    } catch (err) {
+      console.error('Pin error:', err);
     }
   };
 
@@ -488,7 +555,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
       setResetSuccess((prev) => ({ ...prev, [userId]: true }));
       setResetPasswords((prev) => ({ ...prev, [userId]: '' }));
 
-      // Reset success status after 3 seconds
       setTimeout(() => {
         setResetSuccess((prev) => ({ ...prev, [userId]: false }));
       }, 3000);
@@ -538,13 +604,13 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  // Check if active chat room partner is typing
+  // Filter messages by search query if active
+  const filteredMessages = searchQuery.trim()
+    ? messages.filter((m) => m.content.toLowerCase().includes(searchQuery.toLowerCase().trim()))
+    : messages;
+
   const activeChatPartnerId = role === 'admin' ? selectedGuest?.id : adminProfile?.id;
   const isPartnerTyping = activeChatPartnerId && typingUsers[activeChatPartnerId];
-
-  // ============================
-  // RENDER
-  // ============================
 
   if (loading) {
     return (
@@ -615,7 +681,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
                   <button
                     key={g.id}
                     onClick={() => handleSelectGuest(g)}
-                    className={`relative flex w-full items-center gap-3 rounded-xl p-3 text-left transition-all duration-200 ${
+                    className={`group/guest relative flex w-full items-center gap-3 rounded-xl p-3 text-left transition-all duration-200 ${
                       isSelected
                         ? 'bg-gradient-to-r from-violet-600/30 to-indigo-600/20 border border-violet-500/20 text-white shadow-md'
                         : 'bg-slate-900/30 border border-transparent hover:bg-slate-800/50 text-slate-300 hover:text-slate-100'
@@ -631,11 +697,24 @@ export default function ChatWindow({ currentUser, onLogout }) {
                       )}
                     </div>
                     <div className="overflow-hidden flex-1 min-w-0">
-                      <p className="truncate text-sm font-semibold">{g.username}</p>
+                      <div className="flex items-center justify-between gap-1">
+                        <p className="truncate text-sm font-semibold">{g.username}</p>
+                        {g.is_pinned && <Pin className="h-3 w-3 text-amber-400 fill-amber-400 shrink-0" />}
+                      </div>
                       <p className={`truncate text-[10px] ${isGuestTyping ? 'text-emerald-400 font-medium animate-pulse' : 'text-slate-500'}`}>
                         {isGuestTyping ? 'sedang mengetik...' : 'Guest User'}
                       </p>
                     </div>
+
+                    {/* Pin/Unpin Action Button */}
+                    <button
+                      type="button"
+                      onClick={(e) => handleTogglePinGuest(g.id, g.is_pinned, e)}
+                      className="hidden group-hover/guest:flex p-1.5 text-slate-400 hover:text-amber-400 transition-colors"
+                      title={g.is_pinned ? 'Lepas Pin' : 'Sematkan Chat'}
+                    >
+                      <Pin className={`h-3.5 w-3.5 ${g.is_pinned ? 'fill-amber-400 text-amber-400' : ''}`} />
+                    </button>
                   </button>
                 );
               })
@@ -657,7 +736,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
         {/* Chat Window Top Bar */}
         <header className="flex h-16 shrink-0 items-center justify-between border-b border-white/5 bg-slate-900/40 px-4 md:px-6 backdrop-blur-md">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-1 min-w-0">
             {role === 'admin' && (
               <button
                 onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -667,15 +746,15 @@ export default function ChatWindow({ currentUser, onLogout }) {
               </button>
             )}
 
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-500 font-bold text-white shadow-md">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-500 font-bold text-white shadow-md">
               {role === 'admin' 
                 ? (selectedGuest ? selectedGuest.username.charAt(0).toUpperCase() : 'A')
                 : (adminProfile ? adminProfile.username.charAt(0).toUpperCase() : 'G')
               }
             </div>
 
-            <div>
-              <h2 className="text-sm font-bold text-slate-100">
+            <div className="flex-1 min-w-0">
+              <h2 className="text-sm font-bold text-slate-100 truncate">
                 {role === 'admin'
                   ? (selectedGuest ? selectedGuest.username : 'Pilih Chat')
                   : (adminProfile ? adminProfile.username : 'Support Admin')
@@ -700,7 +779,39 @@ export default function ChatWindow({ currentUser, onLogout }) {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* Search Bar Toggle & User Profile Badge */}
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Search Input Toggle */}
+            {showSearch ? (
+              <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-slate-950/80 px-2 py-1">
+                <Search className="h-3.5 w-3.5 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Cari pesan..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-28 sm:w-40 bg-transparent text-xs text-slate-200 outline-none"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => { setShowSearch(false); setSearchQuery(''); }}
+                  className="text-slate-400 hover:text-white p-0.5"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setShowSearch(true)}
+                className="rounded-xl border border-white/5 bg-slate-900 p-2.5 text-slate-400 hover:text-white transition-colors"
+                title="Cari Pesan"
+              >
+                <Search className="h-4 w-4" />
+              </button>
+            )}
+
             <span className="hidden select-none rounded-full border border-violet-500/20 bg-violet-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-violet-400 md:inline-block">
               {role === 'admin' ? 'Admin' : profilesMap[currentUser.id] || 'User'}
             </span>
@@ -734,20 +845,43 @@ export default function ChatWindow({ currentUser, onLogout }) {
             </div>
           ) : (
             <>
-              {messages.length === 0 ? (
+              {filteredMessages.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center text-center text-slate-600">
-                  <p className="text-xs">Belum ada pesan. Kirim pesan untuk memulai percakapan!</p>
+                  <p className="text-xs">
+                    {searchQuery ? 'Tidak ada pesan yang cocok dengan pencarian.' : 'Belum ada pesan. Kirim pesan untuk memulai percakapan!'}
+                  </p>
                 </div>
               ) : (
-                messages.map((msg) => {
+                filteredMessages.map((msg) => {
                   const isSelf = msg.sender_id === currentUser.id;
                   const senderName = profilesMap[msg.sender_id] || 'User';
+                  
+                  // Resolve quoted reply message if present
+                  let quotedMsgData = null;
+                  if (msg.reply_to_id) {
+                    const originalMsg = messages.find((m) => m.id === msg.reply_to_id);
+                    if (originalMsg) {
+                      quotedMsgData = {
+                        senderName: profilesMap[originalMsg.sender_id] || 'User',
+                        content: originalMsg.content
+                      };
+                    }
+                  }
+
                   return (
                     <MessageBubble
                       key={msg.id}
                       message={msg}
                       isSelf={isSelf}
                       senderName={senderName}
+                      quotedMessage={quotedMsgData}
+                      reactions={reactionsMap[msg.id] || []}
+                      onReact={handleToggleReaction}
+                      onReply={(msgToReply) => setReplyingTo({
+                        id: msgToReply.id,
+                        content: msgToReply.content,
+                        senderName: profilesMap[msgToReply.sender_id] || 'User'
+                      })}
                     />
                   );
                 })
@@ -763,13 +897,13 @@ export default function ChatWindow({ currentUser, onLogout }) {
             onSendMessage={handleSendMessage}
             onTypingChange={handleTypingChange}
             disabled={isOffline || (role === 'guest' && !adminProfile)}
+            replyingTo={replyingTo}
+            onCancelReply={() => setReplyingTo(null)}
           />
         )}
       </div>
 
-      {/* ================================ */}
-      {/* Admin User Management Modal      */}
-      {/* ================================ */}
+      {/* Admin User Management Modal */}
       {showUserModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
           <div className="relative w-full max-w-xl max-h-[85vh] flex flex-col rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl overflow-hidden animate-zoom-in">
@@ -793,7 +927,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
               </button>
             </div>
 
-            {/* Modal Body - Scrollable User List */}
+            {/* Modal Body */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {allUsers.length === 0 ? (
                 <div className="flex flex-col items-center justify-center p-8 text-center text-slate-600">
@@ -809,12 +943,10 @@ export default function ChatWindow({ currentUser, onLogout }) {
                   >
                     {/* User Profile Info Area */}
                     <div className="flex items-center gap-4 flex-1 min-w-0">
-                      {/* Avatar */}
                       <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-slate-800 to-slate-700 font-bold text-violet-400 text-lg">
                         {user.username.charAt(0).toUpperCase()}
                       </div>
 
-                      {/* User Info */}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-bold text-slate-100 truncate">{user.username}</p>
                         <p className="text-[10px] text-slate-500 mt-0.5">
@@ -823,7 +955,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
                       </div>
                     </div>
 
-                    {/* Reset Password Form Area (Item 1 Secure Reset) */}
+                    {/* Reset Password Form Area */}
                     <div className="flex items-center gap-2 border-t border-white/5 pt-3 md:border-t-0 md:pt-0 shrink-0">
                       <div className="relative">
                         <input
@@ -862,7 +994,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
                     {/* Action Toolbar */}
                     <div className="flex items-center justify-end gap-1.5 shrink-0 border-t border-white/5 pt-3 md:border-t-0 md:pt-0">
-                      {/* Chat Button */}
                       <button
                         onClick={() => {
                           handleSelectGuest(user);
@@ -874,7 +1005,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
                         <MessageSquare className="h-4 w-4" />
                       </button>
 
-                      {/* Delete Button */}
                       <button
                         onClick={() => handleDeleteUser(user.id)}
                         disabled={deletingUser === user.id}

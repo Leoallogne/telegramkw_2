@@ -33,22 +33,35 @@ CREATE TABLE public.profiles (
     id UUID PRIMARY KEY REFERENCES auth.users ON DELETE CASCADE,
     username TEXT NOT NULL UNIQUE,
     role TEXT CHECK (role IN ('guest', 'admin')) DEFAULT 'guest',
+    is_pinned BOOLEAN DEFAULT false,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 5. Create messages table (with is_read check column for read receipts)
+-- 5. Create messages table (with is_read check column & reply_to_id)
 CREATE TABLE public.messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     sender_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     receiver_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
     content TEXT NOT NULL,
     is_read BOOLEAN DEFAULT false,
+    reply_to_id UUID REFERENCES public.messages(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 5b. Create message_reactions table
+CREATE TABLE public.message_reactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    message_id UUID NOT NULL REFERENCES public.messages(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    emoji TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    UNIQUE(message_id, user_id, emoji)
 );
 
 -- Enable Row Level Security (RLS)
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.message_reactions ENABLE ROW LEVEL SECURITY;
 
 -- 6. Automatic Profile Creation Trigger
 CREATE OR REPLACE FUNCTION public.handle_new_user()
