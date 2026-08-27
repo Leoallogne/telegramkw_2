@@ -43,7 +43,7 @@ CREATE TABLE public.profiles (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- 5. Create messages table (with is_read check column, reply_to_id, editing, soft delete, and pinned)
+-- 5. Create messages table (with is_read check column, reply_to_id, editing, soft delete, pinned, and timer expire_seconds)
 CREATE TABLE public.messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     sender_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
@@ -54,6 +54,7 @@ CREATE TABLE public.messages (
     is_edited BOOLEAN DEFAULT false,
     is_deleted BOOLEAN DEFAULT false,
     is_pinned_chat BOOLEAN DEFAULT false,
+    expire_seconds INTEGER DEFAULT NULL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 

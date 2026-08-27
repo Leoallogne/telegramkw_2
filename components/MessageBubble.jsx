@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
-import { FileText, Download, ExternalLink, Play, Pause, Reply, CornerDownRight, Smile, Pencil, Trash2, Pin, Check, X } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { FileText, Download, ExternalLink, Play, Pause, Reply, CornerDownRight, Smile, Pencil, Trash2, Pin, Check, X, Flame } from 'lucide-react';
 
 function sanitizeForDisplay(str) {
   if (typeof str !== 'string') return '';
@@ -54,17 +54,40 @@ export default function MessageBubble({
   onEditMessage,
   onDeleteMessage,
   onPinMessage,
-  onImageClick
+  onImageClick,
+  onSelfDestruct
 }) {
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [audioProgress, setAudioProgress] = useState(0);
   const [showReactionPicker, setShowReactionPicker] = useState(false);
+
+  // Self-Destruct Countdown state
+  const [countdown, setCountdown] = useState(message?.expire_seconds || null);
 
   // Inline edit state
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState('');
 
   const audioRef = useRef(null);
+
+  // Countdown timer effect for self-destructing messages
+  useEffect(() => {
+    if (!message?.expire_seconds || !message?.is_read) return;
+
+    setCountdown(message.expire_seconds);
+    const interval = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          if (onSelfDestruct) onSelfDestruct(message.id);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [message?.expire_seconds, message?.is_read, message?.id, onSelfDestruct]);
 
   if (!message) return null;
 
@@ -126,7 +149,6 @@ export default function MessageBubble({
     return acc;
   }, {});
 
-  // Soft Deleted Message View
   if (message.is_deleted) {
     return (
       <div className={`flex w-full mb-3 ${isSelf ? 'justify-end' : 'justify-start'}`}>
@@ -149,7 +171,9 @@ export default function MessageBubble({
           isSelf
             ? 'rounded-tr-none bg-gradient-to-br from-violet-600 to-indigo-600 text-white shadow-indigo-900/10'
             : 'rounded-tl-none bg-slate-800 text-slate-100 border border-slate-700/50 shadow-slate-950/10'
-        } ${message.is_pinned_chat ? 'ring-2 ring-amber-400/50' : ''}`}
+        } ${message.is_pinned_chat ? 'ring-2 ring-amber-400/50' : ''} ${
+          message.expire_seconds ? 'border border-amber-500/30' : ''
+        }`}
       >
         {/* Emoji Reaction Popover Picker */}
         {showReactionPicker && (
@@ -176,17 +200,22 @@ export default function MessageBubble({
 
         {/* Sender Name & Action Buttons Header */}
         <div className="flex items-center justify-between gap-2 mb-1.5 select-none">
-          {!isSelf ? (
-            <span className="block text-xs font-bold text-violet-400 tracking-wide">
-              {safeSenderName}
-            </span>
-          ) : (
-            <span />
-          )}
+          <div className="flex items-center gap-1.5">
+            {!isSelf && (
+              <span className="block text-xs font-bold text-violet-400 tracking-wide">
+                {safeSenderName}
+              </span>
+            )}
+            {message.expire_seconds && (
+              <span className="flex items-center gap-1 text-[10px] font-mono font-bold text-amber-300 bg-amber-500/20 px-1.5 py-0.5 rounded-md border border-amber-500/30">
+                <Flame className="h-3 w-3 text-amber-400 fill-amber-400 animate-pulse" />
+                {countdown !== null ? `${countdown}s` : `${message.expire_seconds}s`}
+              </span>
+            )}
+          </div>
 
           {/* Action Toolbar */}
           <div className="flex items-center gap-1">
-            {/* Pin Message Button */}
             {onPinMessage && (
               <button
                 type="button"
@@ -198,7 +227,6 @@ export default function MessageBubble({
               </button>
             )}
 
-            {/* Edit Message Button (Own messages only) */}
             {isSelf && text && onEditMessage && (
               <button
                 type="button"
@@ -210,7 +238,6 @@ export default function MessageBubble({
               </button>
             )}
 
-            {/* Delete Message Button (Own messages only) */}
             {isSelf && onDeleteMessage && (
               <button
                 type="button"
@@ -222,7 +249,6 @@ export default function MessageBubble({
               </button>
             )}
 
-            {/* Reply Button */}
             {onReply && (
               <button
                 type="button"
@@ -277,7 +303,7 @@ export default function MessageBubble({
           </div>
         )}
 
-        {/* Image Attachment (Opens Lightbox on click) */}
+        {/* Image Attachment */}
         {image && (
           <div className="mb-2 overflow-hidden rounded-xl border border-white/10 bg-black/20">
             <button
@@ -405,7 +431,7 @@ export default function MessageBubble({
         )}
       </div>
 
-      {/* External Action Button (Smile Emoji Trigger next to bubble) */}
+      {/* External Action Button */}
       <button
         type="button"
         onClick={() => setShowReactionPicker(!showReactionPicker)}

@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import MessageBubble from './MessageBubble';
 import MessageInput from './MessageInput';
-import { LogOut, MessageSquare, Menu, X, Shield, RefreshCw, Users, Trash2, AlertTriangle, WifiOff, KeyRound, Check, Search, Pin, Download, UserPlus, Settings, User, Bell, Volume2, Eye, ShieldCheck, Heart, UserCheck } from 'lucide-react';
+import { LogOut, MessageSquare, Menu, X, Shield, RefreshCw, Users, Trash2, AlertTriangle, WifiOff, KeyRound, Check, Search, Pin, Download, UserPlus, Settings, Phone, Video, Mic, MicOff, VideoOff, PhoneOff, PhoneCall, Flame } from 'lucide-react';
 
 export default function ChatWindow({ currentUser, onLogout }) {
   const [role, setRole] = useState('guest');
@@ -12,7 +12,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
   const [adminProfile, setAdminProfile] = useState(null);
   
   // Dashboard & Conversation List State
-  const [contacts, setContacts] = useState([]); // List of chat contacts (Admin + Friends)
+  const [contacts, setContacts] = useState([]);
   const [selectedContact, setSelectedContact] = useState(null);
   const [unreadContacts, setUnreadContacts] = useState({});
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -29,7 +29,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
   const [showAddFriendModal, setShowAddFriendModal] = useState(false);
   const [friendSearchQuery, setFriendSearchQuery] = useState('');
   const [searchUsersResults, setSearchUsersResults] = useState([]);
-  const [friendshipMap, setFriendshipMap] = useState({}); // { friendId: true }
+  const [friendshipMap, setFriendshipMap] = useState({});
   const [addingFriendId, setAddingFriendId] = useState(null);
 
   // Profile & Settings Modal State
@@ -42,6 +42,14 @@ export default function ChatWindow({ currentUser, onLogout }) {
   const [showOnlineStatus, setShowOnlineStatus] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSuccess, setSettingsSuccess] = useState(false);
+
+  // WebRTC Call State
+  // { targetId, targetName, isVideo, isIncoming, isConnected, isMuted, isCameraOff }
+  const [callState, setCallState] = useState(null);
+  const peerConnectionRef = useRef(null);
+  const localStreamRef = useRef(null);
+  const localVideoRef = useRef(null);
+  const remoteVideoRef = useRef(null);
 
   // Presence State: { [userId]: { online: boolean, lastSeen: string } }
   const [presenceMap, setPresenceMap] = useState({});
@@ -80,8 +88,9 @@ export default function ChatWindow({ currentUser, onLogout }) {
   const roleRef = useRef(role);
   roleRef.current = role;
   const channelRef = useRef(null);
+  const callChannelRef = useRef(null);
 
-  // Web Audio API Sound Synthesizer
+  // Web Audio API Synthesizers (Chime & Ringtone)
   const playNotificationChime = () => {
     if (!notifySound) return;
     try {
@@ -179,7 +188,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
           [currentUser.id]: myProfile.username,
         }));
 
-        // Fetch Support Admin Profile
         const { data: adminData } = await supabase
           .from('profiles')
           .select('*')
@@ -194,7 +202,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
           }));
         }
 
-        // Fetch User Contacts / Friends List
         await loadUserContacts(currentUser.id, userRole, adminData);
 
       } catch (err) {
@@ -208,7 +215,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
     initializeChat();
   }, [currentUser]);
 
-  // Load Contacts list for WhatsApp sidebar view
+  // Load Contacts list
   const loadUserContacts = async (userId, userRole, adminData) => {
     try {
       if (userRole === 'admin') {
@@ -224,7 +231,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
           setProfilesMap((prev) => ({ ...prev, [g.id]: g.username }));
         });
       } else {
-        // Fetch User Friendships
         const { data: friendshipRows } = await supabase
           .from('friendships')
           .select('friend_id, user_id')
@@ -245,7 +251,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
           friendProfiles = profs || [];
         }
 
-        // Always include Support Admin at top of contacts for Guests
         const contactList = [];
         if (adminData && adminData.id !== userId) {
           contactList.push({ ...adminData, is_admin_contact: true });
@@ -294,6 +299,235 @@ export default function ChatWindow({ currentUser, onLogout }) {
       supabase.removeChannel(presenceChannel);
     };
   }, [currentUser]);
+
+  // WebRTC Signaling Channel Setup
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const callChannel = supabase.channel('call-signaling-room');
+    
+    callChannel
+      .on('broadcast', { event: 'call-offer' }, async ({ payload }) => {
+        if (payload.targetId === currentUser.id) {
+          playNotificationChime();
+          setCallState({
+            targetId: payload.callerId,
+            targetName: payload.callerName,
+            isVideo: payload.isVideo,
+            isIncoming: true,
+            isConnected: false,
+            sdpOffer: payload.offer,
+            isMuted: false,
+            isCameraOff: false
+          });
+        }
+      })
+      .on('broadcast', { event: 'call-answer' }, async ({ payload }) => {
+        if (payload.targetId === currentUser.id && peerConnectionRef.current) {
+          await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(payload.answer));
+          setCallState((prev) => prev ? { ...prev, isConnected: true } : null);
+        }
+      })
+      .on('broadcast', { event: 'ice-candidate' }, async ({ payload }) => {
+        if (payload.targetId === currentUser.id && peerConnectionRef.current) {
+          try {
+            await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(payload.candidate));
+          } catch (e) {
+            console.error('Error adding ICE candidate:', e);
+          }
+        }
+      })
+      .on('broadcast', { event: 'call-end' }, ({ payload }) => {
+        if (payload.targetId === currentUser.id) {
+          cleanupCall();
+        }
+      })
+      .on('broadcast', { event: 'call-decline' }, ({ payload }) => {
+        if (payload.targetId === currentUser.id) {
+          alert('Panggilan ditolak.');
+          cleanupCall();
+        }
+      })
+      .subscribe();
+
+    callChannelRef.current = callChannel;
+
+    return () => {
+      supabase.removeChannel(callChannel);
+    };
+  }, [currentUser]);
+
+  // Clean up WebRTC streams
+  const cleanupCall = () => {
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
+    }
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+    setCallState(null);
+  };
+
+  // Start Outgoing WebRTC Call
+  const startCall = async (isVideo) => {
+    if (!selectedContact) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: isVideo
+      });
+      localStreamRef.current = stream;
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
+      peerConnectionRef.current = pc;
+
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+      pc.ontrack = (event) => {
+        if (remoteVideoRef.current && event.streams[0]) {
+          remoteVideoRef.current.srcObject = event.streams[0];
+        }
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate && callChannelRef.current) {
+          callChannelRef.current.send({
+            type: 'broadcast',
+            event: 'ice-candidate',
+            payload: { candidate: event.candidate, targetId: selectedContact.id, callerId: currentUser.id }
+          });
+        }
+      };
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      setCallState({
+        targetId: selectedContact.id,
+        targetName: selectedContact.username,
+        isVideo,
+        isIncoming: false,
+        isConnected: false,
+        isMuted: false,
+        isCameraOff: false
+      });
+
+      callChannelRef.current.send({
+        type: 'broadcast',
+        event: 'call-offer',
+        payload: {
+          callerId: currentUser.id,
+          callerName: myProfileData?.username || 'User',
+          targetId: selectedContact.id,
+          isVideo,
+          offer
+        }
+      });
+
+    } catch (err) {
+      console.error('Start call error:', err);
+      alert('Gagal mengakses kamera/mikrofon.');
+    }
+  };
+
+  // Accept Incoming WebRTC Call
+  const acceptCall = async () => {
+    if (!callState || !callState.sdpOffer) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: callState.isVideo
+      });
+      localStreamRef.current = stream;
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
+      peerConnectionRef.current = pc;
+
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+
+      pc.ontrack = (event) => {
+        if (remoteVideoRef.current && event.streams[0]) {
+          remoteVideoRef.current.srcObject = event.streams[0];
+        }
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate && callChannelRef.current) {
+          callChannelRef.current.send({
+            type: 'broadcast',
+            event: 'ice-candidate',
+            payload: { candidate: event.candidate, targetId: callState.targetId, callerId: currentUser.id }
+          });
+        }
+      };
+
+      await pc.setRemoteDescription(new RTCSessionDescription(callState.sdpOffer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      setCallState((prev) => ({ ...prev, isConnected: true, isIncoming: false }));
+
+      callChannelRef.current.send({
+        type: 'broadcast',
+        event: 'call-answer',
+        payload: { answer, callerId: currentUser.id, targetId: callState.targetId }
+      });
+
+    } catch (err) {
+      console.error('Accept call error:', err);
+      alert('Gagal menerima panggilan.');
+    }
+  };
+
+  const declineCall = () => {
+    if (callState && callChannelRef.current) {
+      callChannelRef.current.send({
+        type: 'broadcast',
+        event: 'call-decline',
+        payload: { callerId: currentUser.id, targetId: callState.targetId }
+      });
+    }
+    cleanupCall();
+  };
+
+  const endCall = () => {
+    if (callState && callChannelRef.current) {
+      callChannelRef.current.send({
+        type: 'broadcast',
+        event: 'call-end',
+        payload: { callerId: currentUser.id, targetId: callState.targetId }
+      });
+    }
+    cleanupCall();
+  };
+
+  const toggleMute = () => {
+    if (localStreamRef.current) {
+      const audioTrack = localStreamRef.current.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.enabled = !audioTrack.enabled;
+        setCallState((prev) => ({ ...prev, isMuted: !audioTrack.enabled }));
+      }
+    }
+  };
+
+  const toggleCamera = () => {
+    if (localStreamRef.current) {
+      const videoTrack = localStreamRef.current.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.enabled = !videoTrack.enabled;
+        setCallState((prev) => ({ ...prev, isCameraOff: !videoTrack.enabled }));
+      }
+    }
+  };
 
   const loadMessages = async (userId1, userId2) => {
     if (!userId1 || !userId2) return;
@@ -410,6 +644,15 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
       .on(
         'postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'messages' },
+        (payload) => {
+          const deletedMsg = payload.old;
+          setMessages((prev) => prev.filter((m) => m.id !== deletedMsg.id));
+        }
+      )
+
+      .on(
+        'postgres_changes',
         { event: '*', schema: 'public', table: 'message_reactions' },
         (payload) => {
           if (payload.eventType === 'INSERT') {
@@ -469,7 +712,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  const handleSendMessage = async (content, replyToId = null) => {
+  const handleSendMessage = async (content, replyToId = null, expireSeconds = null) => {
     if (!selectedContact) return;
 
     try {
@@ -480,9 +723,8 @@ export default function ChatWindow({ currentUser, onLogout }) {
         is_read: false
       };
 
-      if (replyToId) {
-        payload.reply_to_id = replyToId;
-      }
+      if (replyToId) payload.reply_to_id = replyToId;
+      if (expireSeconds) payload.expire_seconds = expireSeconds;
 
       const { error: sendErr } = await supabase.from('messages').insert(payload);
       if (sendErr) throw sendErr;
@@ -502,7 +744,16 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  // Toggle Emoji Reaction on a message
+  // Self-Destruct Message Auto-Delete Handler
+  const handleSelfDestructMessage = async (messageId) => {
+    try {
+      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+      await supabase.from('messages').delete().eq('id', messageId);
+    } catch (err) {
+      console.error('Self-destruct delete error:', err);
+    }
+  };
+
   const handleToggleReaction = async (messageId, emoji) => {
     const existingList = reactionsMap[messageId] || [];
     const myReaction = existingList.find((r) => r.user_id === currentUser.id && r.emoji === emoji);
@@ -527,7 +778,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  // Edit Message
   const handleEditMessage = async (messageId, newContent) => {
     try {
       const { error } = await supabase
@@ -545,7 +795,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  // Soft Delete Message
   const handleDeleteMessage = async (messageId) => {
     try {
       const { error } = await supabase
@@ -563,7 +812,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  // Pin Message to Header
   const handlePinMessage = async (messageId, currentPinned) => {
     const nextPinned = !currentPinned;
     try {
@@ -581,7 +829,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  // Add Friend Logic
   const handleOpenAddFriendModal = async () => {
     setShowAddFriendModal(true);
     setFriendSearchQuery('');
@@ -657,7 +904,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  // Save Settings Logic
   const handleSaveProfileSettings = async (e) => {
     e.preventDefault();
     setSavingSettings(true);
@@ -692,7 +938,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
         show_online_status: showOnlineStatus
       }));
 
-      // Request browser push notification permission if enabled
       if (notifyPush && typeof window !== 'undefined' && 'Notification' in window) {
         if (Notification.permission === 'default') {
           await Notification.requestPermission();
@@ -709,7 +954,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  // Admin User Management Logic
   const openUserManagement = async () => {
     setShowUserModal(true);
     setResetPasswords({});
@@ -817,6 +1061,111 @@ export default function ChatWindow({ currentUser, onLogout }) {
   return (
     <div className="flex h-[100dvh] w-screen overflow-hidden bg-slate-950 font-sans text-slate-200">
       
+      {/* WebRTC Active / Incoming Call Modal Overlay */}
+      {callState && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-xl p-4 animate-fade-in">
+          <div className="relative w-full max-w-lg overflow-hidden rounded-3xl border border-white/10 bg-slate-950/90 shadow-2xl p-6 text-center">
+            
+            {/* Call Header Status */}
+            <div className="mb-6 flex flex-col items-center">
+              <div className="relative mb-3 flex h-24 w-24 items-center justify-center rounded-3xl bg-gradient-to-tr from-violet-600 to-indigo-500 font-extrabold text-white text-3xl shadow-xl shadow-indigo-600/30">
+                {callState.targetName ? callState.targetName.charAt(0).toUpperCase() : 'U'}
+                <span className="animate-ping absolute inset-0 rounded-3xl bg-violet-500/20" />
+              </div>
+              <h3 className="text-xl font-bold text-slate-100">{callState.targetName}</h3>
+              <p className="mt-1 text-xs font-mono font-semibold text-violet-400">
+                {callState.isIncoming
+                  ? (callState.isVideo ? 'Panggilan Video Masuk...' : 'Panggilan Suara Masuk...')
+                  : callState.isConnected
+                  ? (callState.isVideo ? 'Video Call Aktif' : 'Voice Call Aktif')
+                  : 'Memanggil...'
+                }
+              </p>
+            </div>
+
+            {/* Video Streams Container (if Video Call) */}
+            {callState.isVideo && (
+              <div className="relative mb-6 h-64 w-full overflow-hidden rounded-2xl bg-black border border-white/10">
+                <video
+                  ref={remoteVideoRef}
+                  autoPlay
+                  playsInline
+                  className="h-full w-full object-cover"
+                />
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className="absolute bottom-3 right-3 h-20 w-28 rounded-xl border border-white/20 object-cover shadow-lg"
+                />
+              </div>
+            )}
+
+            {/* Call Action Controls */}
+            {callState.isIncoming ? (
+              <div className="flex items-center justify-center gap-6">
+                <button
+                  type="button"
+                  onClick={declineCall}
+                  className="flex h-14 w-14 items-center justify-center rounded-full bg-rose-600 text-white shadow-lg shadow-rose-600/30 hover:scale-110 transition-transform"
+                  title="Tolak"
+                >
+                  <PhoneOff className="h-6 w-6" />
+                </button>
+                <button
+                  type="button"
+                  onClick={acceptCall}
+                  className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500 text-white shadow-lg shadow-emerald-500/30 hover:scale-110 transition-transform animate-pulse"
+                  title="Terima"
+                >
+                  <PhoneCall className="h-6 w-6" />
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-center gap-4">
+                <button
+                  type="button"
+                  onClick={toggleMute}
+                  className={`flex h-12 w-12 items-center justify-center rounded-2xl border transition-all ${
+                    callState.isMuted
+                      ? 'border-rose-500/50 bg-rose-500/20 text-rose-400'
+                      : 'border-white/10 bg-slate-900 text-slate-300 hover:bg-slate-800'
+                  }`}
+                  title={callState.isMuted ? 'Buka Mute' : 'Mute'}
+                >
+                  {callState.isMuted ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                </button>
+
+                {callState.isVideo && (
+                  <button
+                    type="button"
+                    onClick={toggleCamera}
+                    className={`flex h-12 w-12 items-center justify-center rounded-2xl border transition-all ${
+                      callState.isCameraOff
+                        ? 'border-rose-500/50 bg-rose-500/20 text-rose-400'
+                        : 'border-white/10 bg-slate-900 text-slate-300 hover:bg-slate-800'
+                    }`}
+                    title={callState.isCameraOff ? 'Nyalakan Kamera' : 'Matikan Kamera'}
+                  >
+                    {callState.isCameraOff ? <VideoOff className="h-5 w-5" /> : <Video className="h-5 w-5" />}
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={endCall}
+                  className="flex h-14 w-14 items-center justify-center rounded-full bg-rose-600 text-white shadow-lg shadow-rose-600/30 hover:scale-110 transition-transform"
+                  title="Tutup Panggilan"
+                >
+                  <PhoneOff className="h-6 w-6" />
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Fullscreen Image Lightbox Modal */}
       {activeLightboxUrl && (
         <div
@@ -862,7 +1211,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
         />
       )}
 
-      {/* WhatsApp Style Sidebar (Rendered for ALL Users) */}
+      {/* WhatsApp Style Sidebar */}
       <div
         className={`fixed inset-y-0 left-0 z-20 flex w-80 shrink-0 flex-col border-r border-white/5 bg-slate-900 transition-transform duration-300 md:static md:translate-x-0 ${
           isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
@@ -1053,8 +1402,29 @@ export default function ChatWindow({ currentUser, onLogout }) {
             </div>
           </div>
 
-          {/* Search Bar Toggle & Profile Badge */}
+          {/* WebRTC Calling Buttons & Search Bar Toggle */}
           <div className="flex items-center gap-2 shrink-0">
+            {selectedContact && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => startCall(false)}
+                  className="rounded-xl border border-white/5 bg-slate-900 p-2.5 text-slate-400 hover:bg-violet-600 hover:text-white transition-all"
+                  title="Panggilan Suara (Voice Call)"
+                >
+                  <Phone className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => startCall(true)}
+                  className="rounded-xl border border-white/5 bg-slate-900 p-2.5 text-slate-400 hover:bg-violet-600 hover:text-white transition-all"
+                  title="Panggilan Video (Video Call)"
+                >
+                  <Video className="h-4 w-4" />
+                </button>
+              </>
+            )}
+
             {showSearch ? (
               <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-slate-950/80 px-2 py-1">
                 <Search className="h-3.5 w-3.5 text-slate-400" />
@@ -1176,6 +1546,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
                       onDeleteMessage={handleDeleteMessage}
                       onPinMessage={handlePinMessage}
                       onImageClick={(url) => setActiveLightboxUrl(url)}
+                      onSelfDestruct={handleSelfDestructMessage}
                     />
                   );
                 })
@@ -1250,7 +1621,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
                         {isAlreadyFriend ? (
                           <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg">
-                            <UserCheck className="h-3 w-3" /> Teman
+                            <Check className="h-3 w-3" /> Teman
                           </span>
                         ) : (
                           <button
@@ -1302,7 +1673,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
                 </div>
               )}
 
-              {/* Username Input */}
               <div className="space-y-1">
                 <label className="text-xs font-semibold text-slate-400">Username</label>
                 <input
@@ -1313,7 +1683,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
                 />
               </div>
 
-              {/* Bio / Status Input */}
               <div className="space-y-1">
                 <label className="text-xs font-semibold text-slate-400">Bio Status</label>
                 <input
@@ -1324,15 +1693,11 @@ export default function ChatWindow({ currentUser, onLogout }) {
                 />
               </div>
 
-              {/* Notification Toggles */}
               <div className="border-t border-white/5 pt-3 space-y-3">
                 <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Perizinan Notifikasi</h4>
 
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-xs text-slate-300">
-                    <Volume2 className="h-4 w-4 text-violet-400" />
-                    <span>Suara Notifikasi Chat</span>
-                  </div>
+                  <span className="text-xs text-slate-300">Suara Notifikasi Chat</span>
                   <input
                     type="checkbox"
                     checked={notifySound}
@@ -1342,10 +1707,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
                 </div>
 
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-xs text-slate-300">
-                    <Bell className="h-4 w-4 text-violet-400" />
-                    <span>Push Notification Browser</span>
-                  </div>
+                  <span className="text-xs text-slate-300">Push Notification Browser</span>
                   <input
                     type="checkbox"
                     checked={notifyPush}
@@ -1355,15 +1717,11 @@ export default function ChatWindow({ currentUser, onLogout }) {
                 </div>
               </div>
 
-              {/* Privacy Toggles */}
               <div className="border-t border-white/5 pt-3 space-y-3">
                 <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Privasi & Keamanan</h4>
 
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-xs text-slate-300">
-                    <Check className="h-4 w-4 text-violet-400" />
-                    <span>Tampilkan Centang Dibaca (✓✓)</span>
-                  </div>
+                  <span className="text-xs text-slate-300">Tampilkan Centang Dibaca (✓✓)</span>
                   <input
                     type="checkbox"
                     checked={showReadReceipts}
@@ -1373,10 +1731,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
                 </div>
 
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-xs text-slate-300">
-                    <Eye className="h-4 w-4 text-violet-400" />
-                    <span>Tampilkan Status Online</span>
-                  </div>
+                  <span className="text-xs text-slate-300">Tampilkan Status Online</span>
                   <input
                     type="checkbox"
                     checked={showOnlineStatus}
@@ -1409,7 +1764,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
           <div className="relative w-full max-w-xl max-h-[85vh] flex flex-col rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl overflow-hidden animate-zoom-in">
             
-            {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-white/5 px-6 py-4 shrink-0">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-500">
@@ -1428,7 +1782,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
               </button>
             </div>
 
-            {/* Analytics Summary Badges */}
             <div className="grid grid-cols-3 gap-3 px-6 py-3 border-b border-white/5 bg-slate-950/40 shrink-0 text-center">
               <div className="rounded-xl border border-white/5 bg-slate-900 p-2.5">
                 <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Total User</p>
@@ -1447,7 +1800,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
               </div>
             </div>
 
-            {/* Modal Body */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {allUsers.length === 0 ? (
                 <div className="flex flex-col items-center justify-center p-8 text-center text-slate-600">
@@ -1540,7 +1892,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
               )}
             </div>
 
-            {/* Modal Footer */}
             <div className="border-t border-white/5 px-6 py-3 flex items-center gap-2 text-[10px] text-slate-500 shrink-0">
               <AlertTriangle className="h-3.5 w-3.5 text-amber-500/60" />
               <span>Untuk keamanan, password mentah tidak lagi disimpan. Anda dapat menyetel ulang password tamu kapan saja.</span>

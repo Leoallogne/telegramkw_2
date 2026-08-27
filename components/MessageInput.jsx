@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, AlertCircle, Paperclip, X, FileText, Image as ImageIcon, Mic, Square, Smile, CornerDownRight } from 'lucide-react';
+import { Send, Loader2, AlertCircle, Paperclip, X, FileText, Image as ImageIcon, Mic, Square, Smile, CornerDownRight, Clock, Flame } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 
 function sanitizeInput(str) {
@@ -23,6 +23,14 @@ const POPULAR_EMOJIS = [
   '💯', '🚀', '😎', '🙌', '🤝', '💡'
 ];
 
+const TIMER_OPTIONS = [
+  { label: 'Matikan Timer', value: null },
+  { label: '🔥 5 Detik', value: 5 },
+  { label: '🔥 10 Detik', value: 10 },
+  { label: '🔥 30 Detik', value: 30 },
+  { label: '🔥 1 Menit', value: 60 },
+];
+
 export default function MessageInput({ onSendMessage, onTypingChange, disabled, replyingTo, onCancelReply }) {
   const [text, setText] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
@@ -32,8 +40,10 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   
-  // Emoji picker state
+  // Emoji picker & Timer picker state
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showTimerPicker, setShowTimerPicker] = useState(false);
+  const [selectedTimer, setSelectedTimer] = useState(null);
 
   const [isSending, setIsSending] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -47,7 +57,6 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
   const typingTimeoutRef = useRef(null);
   const lastSentAtRef = useRef(0);
 
-  // Audio recording refs
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const recordingTimerRef = useRef(null);
@@ -60,7 +69,6 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
     };
   }, [filePreviewUrl]);
 
-  // Handle file select
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -93,7 +101,6 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
     if (imageInputRef.current) imageInputRef.current.value = '';
   };
 
-  // Text change handler
   const handleTextChange = useCallback((e) => {
     const raw = e.target.value;
 
@@ -120,14 +127,12 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
     }
   }, [isTyping, onTypingChange]);
 
-  // Insert emoji
   const insertEmoji = (emoji) => {
     setText((prev) => prev + emoji);
     setShowEmojiPicker(false);
     inputRef.current?.focus();
   };
 
-  // Start Audio Recording
   const startRecording = async () => {
     try {
       setValidationError('');
@@ -150,11 +155,10 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
       }, 1000);
     } catch (err) {
       console.error('Microphone access error:', err);
-      setValidationError('Gagal mengosongkan/mengakses mikrofon.');
+      setValidationError('Gagal mengakses mikrofon.');
     }
   };
 
-  // Stop & Cancel Audio Recording
   const cancelRecording = () => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
@@ -166,7 +170,6 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
     audioChunksRef.current = [];
   };
 
-  // Stop & Send Audio Recording
   const stopAndSendRecording = () => {
     if (!mediaRecorderRef.current || !isRecording) return;
 
@@ -194,7 +197,7 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
           .getPublicUrl(filePath);
 
         const contentMarker = `[audio:${publicUrlData.publicUrl}]`;
-        await onSendMessage(contentMarker, replyingTo?.id || null);
+        await onSendMessage(contentMarker, replyingTo?.id || null, selectedTimer);
 
         if (onCancelReply) onCancelReply();
       } catch (err) {
@@ -333,7 +336,7 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
           : attachmentMarker;
       }
 
-      await onSendMessage(finalContent, replyingTo?.id || null);
+      await onSendMessage(finalContent, replyingTo?.id || null, selectedTimer);
       
       setText('');
       removeSelectedFile();
@@ -346,7 +349,7 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
       setIsSending(false);
       setIsUploading(false);
     }
-  }, [text, selectedFile, disabled, isSending, isUploading, isTyping, onTypingChange, onSendMessage, replyingTo, onCancelReply]);
+  }, [text, selectedFile, disabled, isSending, isUploading, isTyping, onTypingChange, onSendMessage, replyingTo, onCancelReply, selectedTimer]);
 
   const formatRecordingTime = (secs) => {
     const mins = Math.floor(secs / 60);
@@ -383,6 +386,43 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
                 className="flex h-8 w-8 items-center justify-center rounded-lg text-lg hover:bg-white/10 hover:scale-125 transition-all"
               >
                 {emoji}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Timer Options Popover */}
+      {showTimerPicker && (
+        <div className="absolute bottom-full left-16 mb-2 z-40 w-52 rounded-2xl border border-white/10 bg-slate-900/95 p-3 shadow-2xl backdrop-blur-xl animate-zoom-in">
+          <div className="flex items-center justify-between border-b border-white/5 pb-2 mb-2">
+            <span className="text-xs font-bold text-amber-300 flex items-center gap-1">
+              <Flame className="h-3.5 w-3.5" /> Timer Pesan Rahasia
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowTimerPicker(false)}
+              className="text-slate-500 hover:text-white"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="space-y-1">
+            {TIMER_OPTIONS.map((opt) => (
+              <button
+                key={opt.label}
+                type="button"
+                onClick={() => {
+                  setSelectedTimer(opt.value);
+                  setShowTimerPicker(false);
+                }}
+                className={`w-full text-left px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                  selectedTimer === opt.value
+                    ? 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30'
+                    : 'text-slate-300 hover:bg-white/5'
+                }`}
+              >
+                {opt.label}
               </button>
             ))}
           </div>
@@ -501,16 +541,32 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
             className="hidden"
           />
 
-          {/* Upload & Emoji Action Buttons */}
+          {/* Upload & Emoji & Timer Action Buttons */}
           <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
-              onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+              onClick={() => { setShowEmojiPicker(!showEmojiPicker); setShowTimerPicker(false); }}
               disabled={disabled || isSending || isUploading}
               className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-slate-950/60 text-slate-400 hover:bg-slate-800 hover:text-amber-400 transition-all duration-200 disabled:opacity-50"
               title="Emoji"
             >
               <Smile className="h-5 w-5" />
+            </button>
+
+            {/* Self-Destruct Timer Button */}
+            <button
+              type="button"
+              onClick={() => { setShowTimerPicker(!showTimerPicker); setShowEmojiPicker(false); }}
+              disabled={disabled || isSending || isUploading}
+              className={`flex h-11 items-center gap-1 px-3 rounded-xl border transition-all duration-200 disabled:opacity-50 ${
+                selectedTimer
+                  ? 'border-amber-500/40 bg-amber-500/15 text-amber-300 font-bold'
+                  : 'border-white/10 bg-slate-950/60 text-slate-400 hover:bg-slate-800 hover:text-amber-400'
+              }`}
+              title="Setel Timer Pesan Rahasia"
+            >
+              <Clock className="h-4 w-4" />
+              {selectedTimer && <span className="text-xs font-mono">{selectedTimer}s</span>}
             </button>
 
             <button
@@ -548,15 +604,17 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
                   handleSubmit(e);
                 }
               }}
-              placeholder={selectedFile ? 'Tambah keterangan (opsional)...' : 'Tulis pesan...'}
+              placeholder={selectedFile ? 'Tambah keterangan (opsional)...' : (selectedTimer ? `Pesan rahasia (${selectedTimer}s)...` : 'Tulis pesan...')}
               disabled={disabled || isSending || isUploading}
               maxLength={MAX_MESSAGE_LENGTH + 1}
               className={`w-full rounded-xl border bg-slate-950/60 px-4 py-3 text-sm text-slate-200 placeholder-slate-500 outline-none transition-all duration-200 focus:ring-1 disabled:cursor-not-allowed disabled:opacity-50 ${
-                isOverLimit
+                selectedTimer
+                  ? 'border-amber-500/40 focus:border-amber-500 focus:ring-amber-500/20'
+                  : isOverLimit
                   ? 'border-rose-500 focus:border-rose-500 focus:ring-rose-500/20'
                   : 'border-white/10 focus:border-violet-500 focus:ring-violet-500/20'
               }`}
-            />
+          />
             {text.length > MAX_MESSAGE_LENGTH * 0.8 && (
               <span
                 className={`absolute bottom-2 right-3 text-[10px] select-none ${
