@@ -39,6 +39,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
   // Admin User Management Modal state
   const [showUserModal, setShowUserModal] = useState(false);
   const [allUsers, setAllUsers] = useState([]);
+  const [adminSearchQuery, setAdminSearchQuery] = useState('');
   const [deletingUser, setDeletingUser] = useState(null);
   const [resetPasswords, setResetPasswords] = useState({});
   const [resettingUser, setResettingUser] = useState(null);
@@ -1232,7 +1233,12 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
+  const filteredAdminUsers = allUsers.filter((user) =>
+    user.username?.toLowerCase().includes(adminSearchQuery.toLowerCase().trim())
+  );
+
   const openUserManagement = async () => {
+    setSelectedDetailUser(null);
     setShowUserModal(true);
     setResetPasswords({});
     setResetSuccess({});
@@ -1240,7 +1246,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
-        .eq('role', 'guest')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -2430,16 +2435,15 @@ export default function ChatWindow({ currentUser, onLogout }) {
       {/* Admin User Management & Analytics Modal */}
       {showUserModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="relative w-full max-w-xl max-h-[85vh] flex flex-col rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl overflow-hidden animate-zoom-in">
-            
+          <div className="relative w-full max-w-3xl max-h-[85vh] flex flex-col rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl overflow-hidden animate-zoom-in">
             <div className="flex items-center justify-between border-b border-white/5 px-6 py-4 shrink-0">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-500">
-                  <Users className="h-5 w-5 text-white" />
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-500">
+                  <Shield className="h-5 w-5 text-white" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-slate-100">Kelola User & Detail Password</h3>
-                  <p className="text-[10px] text-slate-500">{allUsers.length} user terdaftar</p>
+                  <h3 className="text-base font-bold text-slate-100">Dashboard Admin</h3>
+                  <p className="text-[10px] text-slate-500">Monitoring user, aktivitas, dan keamanan sistem</p>
                 </div>
               </div>
               <button
@@ -2450,58 +2454,90 @@ export default function ChatWindow({ currentUser, onLogout }) {
               </button>
             </div>
 
-            <div className="grid grid-cols-3 gap-3 px-6 py-3 border-b border-white/5 bg-slate-950/40 shrink-0 text-center">
-              <div className="rounded-xl border border-white/5 bg-slate-900 p-2.5">
-                <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Total User</p>
-                <p className="text-lg font-extrabold text-violet-400 mt-0.5">{allUsers.length}</p>
+            <div className="grid grid-cols-2 gap-3 px-6 py-3 border-b border-white/5 bg-slate-950/40 shrink-0">
+              <div className="rounded-xl border border-white/5 bg-slate-900 p-3">
+                <p className="text-[10px] uppercase tracking-wider text-slate-500">Total User</p>
+                <p className="mt-1 text-xl font-extrabold text-violet-400">{allUsers.length}</p>
               </div>
-              <div className="rounded-xl border border-white/5 bg-slate-900 p-2.5">
-                <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Pesan Chat</p>
-                <p className="text-lg font-extrabold text-indigo-400 mt-0.5">{messages.length}</p>
+              <div className="rounded-xl border border-white/5 bg-slate-900 p-3">
+                <p className="text-[10px] uppercase tracking-wider text-slate-500">Online Saat Ini</p>
+                <p className="mt-1 text-xl font-extrabold text-emerald-400">{Object.keys(presenceMap).length}</p>
               </div>
-              <div className="rounded-xl border border-white/5 bg-slate-900 p-2.5">
-                <p className="text-[10px] text-slate-500 uppercase font-bold tracking-wider">Status Sistem</p>
-                <p className="text-xs font-bold text-emerald-400 mt-1 flex items-center justify-center gap-1">
-                  <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  Aktif 100%
-                </p>
+              <div className="rounded-xl border border-white/5 bg-slate-900 p-3">
+                <p className="text-[10px] uppercase tracking-wider text-slate-500">Pesan Dalam Chat</p>
+                <p className="mt-1 text-xl font-extrabold text-indigo-400">{messages.length}</p>
+              </div>
+              <div className="rounded-xl border border-white/5 bg-slate-900 p-3">
+                <p className="text-[10px] uppercase tracking-wider text-slate-500">Grup Aktif</p>
+                <p className="mt-1 text-xl font-extrabold text-amber-400">{groups.length}</p>
               </div>
             </div>
 
+            <div className="flex items-center gap-2 border-b border-white/5 bg-slate-950/30 px-6 py-3 shrink-0">
+              <Search className="h-4 w-4 text-slate-500" />
+              <input
+                type="text"
+                value={adminSearchQuery}
+                onChange={(e) => setAdminSearchQuery(e.target.value)}
+                placeholder="Cari user berdasarkan username..."
+                className="w-full bg-transparent text-sm text-slate-200 placeholder-slate-500 outline-none"
+              />
+              {adminSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setAdminSearchQuery('')}
+                  className="text-xs text-slate-400 hover:text-white"
+                >
+                  Reset
+                </button>
+              )}
+            </div>
+
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {allUsers.length === 0 ? (
+              {filteredAdminUsers.length === 0 ? (
                 <div className="flex flex-col items-center justify-center p-8 text-center text-slate-600">
                   <Users className="h-10 w-10 mb-3 opacity-30" />
-                  <p className="text-sm font-semibold text-slate-400">Belum ada user terdaftar</p>
-                  <p className="text-xs text-slate-600 mt-1">User baru yang mendaftar akan muncul di sini.</p>
+                  <p className="text-sm font-semibold text-slate-400">Belum ada user sesuai pencarian</p>
+                  <p className="text-xs text-slate-600 mt-1">Coba kata kunci lain atau reset pencarian.</p>
                 </div>
               ) : (
-                allUsers.map((user) => (
+                filteredAdminUsers.map((user) => (
                   <div
                     key={user.id}
                     className="flex flex-col md:flex-row md:items-center gap-4 rounded-xl border border-white/5 bg-slate-950/50 p-4 transition-all duration-200 hover:border-white/10"
                   >
                     <div className="flex items-center gap-4 flex-1 min-w-0">
-                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-slate-800 to-slate-700 font-bold text-violet-400 text-lg">
+                      <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-slate-800 to-slate-700 font-bold text-violet-400 text-lg">
                         {user.username.charAt(0).toUpperCase()}
+                        {presenceMap[user.id]?.online && (
+                          <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-slate-900" />
+                        )}
                       </div>
 
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold text-slate-100 truncate">{user.username}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-bold text-slate-100 truncate">{user.username}</p>
+                          {user.role === 'admin' && (
+                            <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[8px] font-bold uppercase text-violet-300">Admin</span>
+                          )}
+                        </div>
                         <p className="text-[10px] text-slate-500 mt-0.5">
-                          Terdaftar: {formatDate(user.created_at)}
+                          {presenceMap[user.id]?.online ? 'Online sekarang' : 'Offline'} · Terdaftar: {formatDate(user.created_at)}
                         </p>
                       </div>
                     </div>
 
                     <div className="flex items-center justify-end gap-1.5 shrink-0 border-t border-white/5 pt-3 md:border-t-0 md:pt-0">
                       <button
-                        onClick={() => setSelectedDetailUser(user)}
+                        onClick={() => {
+                          setShowUserModal(false);
+                          setSelectedDetailUser(user);
+                        }}
                         className="flex h-9 items-center gap-1 px-3 rounded-lg border border-indigo-500/20 bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 text-xs font-semibold transition-all duration-200"
                         title="Lihat Detail & Akses Password"
                       >
                         <Eye className="h-4 w-4" />
-                        Detail & PW
+                        Detail
                       </button>
 
                       <button
@@ -2535,7 +2571,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
             <div className="border-t border-white/5 px-6 py-3 flex items-center gap-2 text-[10px] text-slate-500 shrink-0">
               <AlertTriangle className="h-3.5 w-3.5 text-amber-500/60" />
-              <span>Untuk keamanan, password mentah disembunyikan. Klik Detail & PW untuk mengelola akses kata sandi.</span>
+              <span>Untuk keamanan, password mentah disembunyikan. Klik Detail untuk mengelola akses kata sandi.</span>
             </div>
           </div>
         </div>
