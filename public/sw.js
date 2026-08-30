@@ -7,19 +7,35 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
 
-// Event listener for push notifications (if third-party push server is added later)
+self.addEventListener('message', (event) => {
+  const data = event.data || {};
+  if (!data.type || data.type !== 'SHOW_CHAT_NOTIFICATION') return;
+
+  const title = data.title || 'Pesan baru';
+  const options = {
+    body: data.body || 'Anda menerima pesan baru.',
+    icon: '/favicon.ico',
+    tag: data.tag || 'chat-message',
+    renotify: true,
+    vibrate: [120, 50, 120],
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
 self.addEventListener('push', (event) => {
   const data = event.data ? event.data.json() : {};
   const title = data.title || 'New Message';
   const options = {
     body: data.body || 'You have received a new message.',
     icon: '/favicon.ico',
-    tag: 'chat-message',
+    tag: data.tag || 'chat-message',
+    renotify: true,
+    vibrate: [120, 50, 120],
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
-// Handle notification click to focus or open chat
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   event.waitUntil(

@@ -14,6 +14,11 @@ const geistMono = Geist_Mono({
 export const metadata = {
   title: "Anonymous Guest-to-Admin Chat System",
   description: "Seamless anonymous guest-to-admin real-time messaging application powered by Next.js, Tailwind CSS, and Supabase.",
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"),
+};
+
+export const viewport = {
+  themeColor: "#020817",
 };
 
 export default function RootLayout({ children }) {
@@ -22,7 +27,7 @@ export default function RootLayout({ children }) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col bg-slate-950 text-slate-100">{children}</body>
     </html>
   );
 }

@@ -65,7 +65,6 @@ export default function GuestLoginForm({ onLoginSuccess }) {
         options: {
           data: {
             username: cleanUsername,
-            password: password,
           },
         },
       });

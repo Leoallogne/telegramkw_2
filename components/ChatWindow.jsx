@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import Image from 'next/image';
 import { supabase } from '@/lib/supabaseClient';
 import MessageBubble from './MessageBubble';
 import MessageInput from './MessageInput';
@@ -16,7 +17,10 @@ export default function ChatWindow({ currentUser, onLogout }) {
   const [groups, setGroups] = useState([]);
   const [selectedContact, setSelectedContact] = useState(null); // contact or group object
   const [unreadContacts, setUnreadContacts] = useState({});
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.innerWidth >= 768;
+  });
 
   // Group Creation Modal State
   const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
@@ -68,6 +72,10 @@ export default function ChatWindow({ currentUser, onLogout }) {
   const remoteAudioRef = useRef(null);
   const iceCandidatesQueueRef = useRef([]);
 
+  const selectedContactRef = useRef(null);
+  const adminProfileRef = useRef(null);
+  const roleRef = useRef('guest');
+
   // Presence State: { [userId]: { online: boolean, lastSeen: string } }
   const [presenceMap, setPresenceMap] = useState({});
 
@@ -97,23 +105,73 @@ export default function ChatWindow({ currentUser, onLogout }) {
   const [error, setError] = useState('');
 
   const messagesEndRef = useRef(null);
-  
-  const selectedContactRef = useRef(selectedContact);
-  selectedContactRef.current = selectedContact;
-  const adminProfileRef = useRef(adminProfile);
-  adminProfileRef.current = adminProfile;
-  const roleRef = useRef(role);
-  roleRef.current = role;
   const channelRef = useRef(null);
   const callChannelRef = useRef(null);
 
+  useEffect(() => {
+    selectedContactRef.current = selectedContact;
+  }, [selectedContact]);
+
+  useEffect(() => {
+    adminProfileRef.current = adminProfile;
+  }, [adminProfile]);
+
+  useEffect(() => {
+    roleRef.current = role;
+  }, [role]);
+
+  const requestNotificationPermission = useCallback(async () => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return 'unsupported';
+
+    if (Notification.permission === 'default') {
+      const permission = await Notification.requestPermission();
+      return permission;
+    }
+
+    return Notification.permission;
+  }, []);
+
+  const showWebNotification = useCallback(async ({ title, body, tag = 'chat-message' }) => {
+    if (typeof window === 'undefined' || !notifyPush) return;
+
+    const permission = await requestNotificationPermission();
+    if (permission !== 'granted') return;
+
+    try {
+      const registration = await navigator.serviceWorker?.ready;
+      if (registration && typeof registration.showNotification === 'function') {
+        registration.showNotification(title, {
+          body,
+          icon: '/favicon.ico',
+          tag,
+          renotify: true,
+          vibrate: [120, 60, 120],
+        });
+        return;
+      }
+
+      new Notification(title, {
+        body,
+        icon: '/favicon.ico',
+        tag,
+        renotify: true,
+        vibrate: [120, 60, 120],
+      });
+    } catch (err) {
+      console.warn('Browser notification failed:', err);
+    }
+  }, [notifyPush, requestNotificationPermission]);
+
   // Web Audio API Synthesizer
-  const playNotificationChime = () => {
-    if (!notifySound) return;
+  const playNotificationChime = useCallback(async () => {
+    if (!notifySound || typeof window === 'undefined') return;
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (!AudioCtx) return;
       const ctx = new AudioCtx();
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
+      }
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
 
@@ -132,13 +190,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
     } catch {
       // Ignore audio synthesis errors
     }
-  };
-
-  useEffect(() => {
-    if (typeof window !== 'undefined' && window.innerWidth < 768) {
-      setIsSidebarOpen(false);
-    }
-  }, []);
+  }, [notifySound]);
 
   // Monitor online/offline status
   useEffect(() => {
@@ -164,6 +216,10 @@ export default function ChatWindow({ currentUser, onLogout }) {
       setLoading(true);
       setError('');
       try {
+        if (typeof window !== 'undefined' && 'Notification' in window && notifyPush && Notification.permission === 'default') {
+          void requestNotificationPermission();
+        }
+
         let { data: myProfile, error: myProfileErr } = await supabase
           .from('profiles')
           .select('*')
@@ -219,8 +275,10 @@ export default function ChatWindow({ currentUser, onLogout }) {
           }));
         }
 
-        await loadUserContacts(currentUser.id, userRole, adminData);
-        await loadUserGroups(currentUser.id, userRole);
+        await Promise.all([
+          loadUserContacts(currentUser.id, userRole, adminData),
+          loadUserGroups(currentUser.id, userRole),
+        ]);
 
       } catch (err) {
         console.error('Initialization error:', err);
@@ -231,10 +289,10 @@ export default function ChatWindow({ currentUser, onLogout }) {
     };
 
     initializeChat();
-  }, [currentUser]);
+  }, [currentUser, notifyPush, requestNotificationPermission]);
 
   // Load Contacts list
-  const loadUserContacts = async (userId, userRole, adminData) => {
+  async function loadUserContacts(userId, userRole, adminData) {
     try {
       if (userRole === 'admin') {
         const { data: guestProfiles } = await supabase
@@ -286,10 +344,10 @@ export default function ChatWindow({ currentUser, onLogout }) {
     } catch (err) {
       console.error('Error loading contacts:', err);
     }
-  };
+  }
 
   // Load Groups (Admin gets Master Access to ALL groups, Guests get joined groups)
-  const loadUserGroups = async (userId, userRole) => {
+  async function loadUserGroups(userId, userRole) {
     try {
       if (userRole === 'admin') {
         // Admin gets Master Access to ALL groups
@@ -323,7 +381,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
     } catch (err) {
       console.error('Error loading groups:', err);
     }
-  };
+  }
 
   // Realtime Presence Tracker Setup
   useEffect(() => {
@@ -353,7 +411,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
     return () => {
       supabase.removeChannel(presenceChannel);
     };
-  }, [currentUser]);
+  }, [currentUser, playNotificationChime, notifyPush, notifySound, requestNotificationPermission, showWebNotification]);
 
   // Bind WebRTC streams to DOM video/audio elements
   useEffect(() => {
@@ -438,10 +496,10 @@ export default function ChatWindow({ currentUser, onLogout }) {
     return () => {
       supabase.removeChannel(callChannel);
     };
-  }, [currentUser]);
+  }, [currentUser, playNotificationChime]);
 
   // Clean up WebRTC streams
-  const cleanupCall = () => {
+  function cleanupCall() {
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach((track) => track.stop());
       localStreamRef.current = null;
@@ -453,11 +511,22 @@ export default function ChatWindow({ currentUser, onLogout }) {
     remoteStreamRef.current = null;
     iceCandidatesQueueRef.current = [];
     setCallState(null);
-  };
+  }
 
   // Start Outgoing WebRTC Call
   const startCall = async (isVideo) => {
     if (!selectedContact || selectedContact.is_group) return;
+
+    if (typeof window === 'undefined' || !('navigator' in window) || !navigator.mediaDevices?.getUserMedia) {
+      alert('Browser ini tidak mendukung panggilan suara/video.');
+      return;
+    }
+
+    if (!window.isSecureContext && window.location.hostname !== 'localhost') {
+      alert('Panggilan web memerlukan HTTPS atau localhost.');
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
@@ -522,6 +591,17 @@ export default function ChatWindow({ currentUser, onLogout }) {
   // Accept Incoming WebRTC Call
   const acceptCall = async () => {
     if (!callState || !callState.sdpOffer) return;
+
+    if (typeof window === 'undefined' || !('navigator' in window) || !navigator.mediaDevices?.getUserMedia) {
+      alert('Browser ini tidak mendukung panggilan suara/video.');
+      return;
+    }
+
+    if (!window.isSecureContext && window.location.hostname !== 'localhost') {
+      alert('Panggilan web memerlukan HTTPS atau localhost.');
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
@@ -673,7 +753,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  const markMessagesAsRead = async (partnerId) => {
+  const markMessagesAsRead = useCallback(async (partnerId) => {
     if (!partnerId) return;
     try {
       const { error: updateErr } = await supabase
@@ -687,7 +767,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
     } catch (err) {
       console.warn('Could not mark messages as read:', err.message);
     }
-  };
+  }, [currentUser?.id]);
 
   // Realtime Messages & Reactions Subscription Setup
   useEffect(() => {
@@ -718,8 +798,21 @@ export default function ChatWindow({ currentUser, onLogout }) {
             });
 
             if (newMsg.sender_id !== currentUser.id) {
-              playNotificationChime();
-              if (!activeTarget.is_group) await markMessagesAsRead(activeTarget.id);
+              const shouldAlert = document.visibilityState === 'hidden' || !activeTarget || !isMatch;
+              if (shouldAlert) {
+                await playNotificationChime();
+                if (notifyPush) {
+                  const senderName = profilesMap[newMsg.sender_id] || 'Pesan baru';
+                  await showWebNotification({
+                    title: senderName,
+                    body: newMsg.content?.slice(0, 120) || 'Anda menerima pesan baru',
+                    tag: newMsg.id,
+                  });
+                }
+              } else {
+                await playNotificationChime();
+              }
+              if (!activeTarget?.is_group) await markMessagesAsRead(activeTarget.id);
             }
           }
 
@@ -729,6 +822,18 @@ export default function ChatWindow({ currentUser, onLogout }) {
               ...prev,
               [key]: true,
             }));
+
+            if (notifyPush || notifySound) {
+              await playNotificationChime();
+              if (notifyPush) {
+                const senderName = profilesMap[newMsg.sender_id] || 'Pesan baru';
+                await showWebNotification({
+                  title: senderName,
+                  body: newMsg.content?.slice(0, 120) || 'Anda menerima pesan baru',
+                  tag: newMsg.id,
+                });
+              }
+            }
           }
         }
       )
@@ -795,7 +900,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [currentUser, loading]);
+  }, [currentUser, loading, markMessagesAsRead, notifyPush, notifySound, playNotificationChime, profilesMap, showWebNotification]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -1099,10 +1204,23 @@ export default function ChatWindow({ currentUser, onLogout }) {
       }));
 
       if (notifyPush && typeof window !== 'undefined' && 'Notification' in window) {
-        if (Notification.permission === 'default') {
-          await Notification.requestPermission();
-        }
+        await requestNotificationPermission();
       }
+
+      const { error: profileSyncErr } = await supabase
+        .from('profiles')
+        .update({
+          username: cleanUsername,
+          status_bio: editBio.trim(),
+          notify_sound: notifySound,
+          notify_push: notifyPush,
+          show_read_receipts: showReadReceipts,
+          show_online_status: showOnlineStatus,
+        })
+        .eq('id', currentUser.id)
+        .select();
+
+      if (profileSyncErr) throw profileSyncErr;
 
       setSettingsSuccess(true);
       setTimeout(() => setSettingsSuccess(false), 3000);
@@ -1337,9 +1455,12 @@ export default function ChatWindow({ currentUser, onLogout }) {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4 animate-fade-in"
         >
           <div className="relative max-w-4xl max-h-[90vh] overflow-hidden rounded-2xl border border-white/10 bg-slate-950/80 shadow-2xl">
-            <img
+            <Image
               src={activeLightboxUrl}
               alt="Fullscreen View"
+              width={1200}
+              height={800}
+              unoptimized
               className="max-h-[80vh] w-full object-contain"
             />
             <div className="absolute top-3 right-3 flex items-center gap-2">
@@ -1962,7 +2083,14 @@ export default function ChatWindow({ currentUser, onLogout }) {
                           onClick={() => setActiveLightboxUrl(imgUrl)}
                           className="group relative aspect-square overflow-hidden rounded-xl border border-white/10 bg-black/40"
                         >
-                          <img src={imgUrl} alt="Vault Media" className="h-full w-full object-cover group-hover:scale-110 transition-transform" />
+                          <Image
+                            src={imgUrl}
+                            alt="Vault Media"
+                            width={400}
+                            height={400}
+                            unoptimized
+                            className="h-full w-full object-cover group-hover:scale-110 transition-transform"
+                          />
                         </button>
                       );
                     })}

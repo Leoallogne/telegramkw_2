@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
+import Image from 'next/image';
 import { FileText, Download, ExternalLink, Play, Pause, Reply, CornerDownRight, Smile, Pencil, Trash2, Pin, Check, X, Flame, MapPin, Copy } from 'lucide-react';
 
 function sanitizeForDisplay(str) {
@@ -70,7 +71,7 @@ export default function MessageBubble({
   const [copiedText, setCopiedText] = useState(false);
 
   // Self-Destruct Countdown state
-  const [countdown, setCountdown] = useState(message?.expire_seconds || null);
+  const [countdown, setCountdown] = useState(() => message?.expire_seconds ?? null);
 
   // Inline edit state
   const [isEditing, setIsEditing] = useState(false);
@@ -82,15 +83,15 @@ export default function MessageBubble({
   useEffect(() => {
     if (!message?.expire_seconds || !message?.is_read) return;
 
-    setCountdown(message.expire_seconds);
     const interval = setInterval(() => {
       setCountdown((prev) => {
-        if (prev <= 1) {
+        const nextValue = prev === null ? message.expire_seconds : prev;
+        if (nextValue <= 1) {
           clearInterval(interval);
           if (onSelfDestruct) onSelfDestruct(message.id);
           return 0;
         }
-        return prev - 1;
+        return nextValue - 1;
       });
     }, 1000);
 
@@ -363,13 +364,15 @@ export default function MessageBubble({
               className="group/img relative block w-full text-left overflow-hidden"
               title="Perbesar gambar"
             >
-              <img
+              <Image
                 src={image}
                 alt="Lampiran Gambar"
+                width={1200}
+                height={800}
+                unoptimized
                 className="max-h-64 w-full object-cover transition-transform duration-300 group-hover/img:scale-105"
                 loading="lazy"
                 onError={(e) => {
-                  e.currentTarget.onerror = null;
                   e.currentTarget.src = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="%2394a3b8" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
                 }}
               />
