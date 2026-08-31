@@ -32,10 +32,12 @@ async function checkSupabase(env) {
     envReady: hasKeys,
     url,
     anonKeyPresent: Boolean(anon),
-    runtime: 'unknown'
+    runtime: 'unknown',
+    diagnosis: 'unknown'
   };
 
   if (!hasKeys) {
+    status.diagnosis = 'Missing project credentials. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.';
     console.log('Supabase env: missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY');
     return status;
   }
@@ -50,9 +52,20 @@ async function checkSupabase(env) {
       }
     });
     status.runtime = res.status;
+
+    if (res.status === 401) {
+      status.diagnosis = 'Unauthorized: project URL or anon key does not match the active Supabase project, or credentials are stale.';
+    } else if (res.ok) {
+      status.diagnosis = 'Supabase credentials are valid for this project and REST endpoint is reachable.';
+    } else {
+      status.diagnosis = `Unexpected response status ${res.status}. Check project settings and URL.`;
+    }
+
     console.log(`Supabase REST check: status ${res.status} (${res.ok ? 'OK' : 'NOT OK'})`);
+    console.log(`Diagnosis: ${status.diagnosis}`);
   } catch (err) {
     status.runtime = 'error';
+    status.diagnosis = 'Network or DNS issue while contacting Supabase REST endpoint.';
     console.error('Supabase REST check failed:', err.message);
   }
 

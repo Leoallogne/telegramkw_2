@@ -1,16 +1,20 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabaseClient';
+import { supabase, isSupabaseConfigured, supabaseConfigError } from '@/lib/supabaseClient';
 import GuestLoginForm from '@/components/GuestLoginForm';
 import ChatWindow from '@/components/ChatWindow';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, AlertTriangle } from 'lucide-react';
 
 export default function Home() {
   const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!isSupabaseConfigured ? false : true);
 
   useEffect(() => {
+    if (!isSupabaseConfigured) {
+      return undefined;
+    }
+
     const withTimeout = (promise, ms, message) =>
       Promise.race([
         promise,
@@ -72,6 +76,27 @@ export default function Home() {
       console.error('Logout error:', err);
     }
   };
+
+  if (!isSupabaseConfigured) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-slate-950 px-6 text-slate-100">
+        <div className="max-w-lg rounded-2xl border border-amber-500/30 bg-slate-900 p-8 shadow-2xl">
+          <div className="mb-4 flex items-center gap-3 text-amber-300">
+            <AlertTriangle className="h-6 w-6" />
+            <h1 className="text-xl font-bold">Supabase configuration issue</h1>
+          </div>
+          <p className="text-sm leading-6 text-slate-300">
+            {supabaseConfigError?.message || 'Konfigurasi Supabase tidak valid.'}
+          </p>
+          <ul className="mt-4 list-disc space-y-2 pl-5 text-sm text-slate-300">
+            <li>Pastikan project Supabase benar dipilih.</li>
+            <li>Isi NEXT_PUBLIC_SUPABASE_URL dan NEXT_PUBLIC_SUPABASE_ANON_KEY di .env.local.</li>
+            <li>Sinkronkan variabel yang sama di Vercel Environment.</li>
+          </ul>
+        </div>
+      </main>
+    );
+  }
 
   if (loading) {
     return (
