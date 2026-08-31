@@ -11,6 +11,14 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const withTimeout = (promise, ms, message) =>
+      Promise.race([
+        promise,
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error(message)), ms);
+        }),
+      ]);
+
     // Register Service Worker for mobile notification handling
     if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js')
@@ -21,12 +29,20 @@ export default function Home() {
     // 1. Check existing session on page load (Auto-reconnect)
     const checkSession = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const { data: { session } } = await withTimeout(
+          supabase.auth.getSession(),
+          12000,
+          'Session check timed out. Falling back to login.'
+        );
+
         if (session?.user) {
           setUser(session.user);
+        } else {
+          setUser(null);
         }
       } catch (err) {
         console.error('Session check error:', err);
+        setUser(null);
       } finally {
         setLoading(false);
       }

@@ -83,6 +83,15 @@ export default function ChatWindow({ currentUser, onLogout }) {
   // Lightbox Modal State
   const [activeLightboxUrl, setActiveLightboxUrl] = useState(null);
 
+  // Realtime & notification health state
+  const [notificationStatus, setNotificationStatus] = useState('unknown');
+  const [realtimeStatus, setRealtimeStatus] = useState({
+    messages: 'connecting',
+    presence: 'connecting',
+    calls: 'connecting',
+  });
+  const [smokeStatus, setSmokeStatus] = useState('Belum diuji');
+
   // Search Bar State
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
@@ -193,6 +202,117 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   }, [notifySound]);
 
+  const closeAllModals = useCallback(() => {
+    setShowCreateGroupModal(false);
+    setShowVaultModal(false);
+    setSelectedDetailUser(null);
+    setShowUserModal(false);
+    setShowAddFriendModal(false);
+    setShowSettingsModal(false);
+    setActiveLightboxUrl(null);
+  }, []);
+
+  const requestBrowserPermission = useCallback(async () => {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      setNotificationStatus('unsupported');
+      return 'unsupported';
+    }
+
+    const permission = await Notification.requestPermission();
+    setNotificationStatus(permission);
+    return permission;
+  }, []);
+
+  const runNotificationPreview = useCallback(async () => {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      setNotificationStatus('unsupported');
+      return 'Browser tidak mendukung Notification API.';
+    }
+
+    const permission = Notification.permission === 'default'
+      ? await requestBrowserPermission()
+      : Notification.permission;
+
+    setNotificationStatus(permission);
+
+    if (permission !== 'granted') {
+      return 'Izin notifikasi belum diberikan.';
+    }
+
+    const payload = {
+      title: 'Preview Notification',
+      body: 'Tes notifikasi web berhasil dipanggil.',
+      tag: 'notification-preview',
+    };
+
+    try {
+      const registration = await navigator.serviceWorker?.ready;
+      if (registration && typeof registration.showNotification === 'function') {
+        registration.showNotification(payload.title, {
+          body: payload.body,
+          icon: '/favicon.ico',
+          tag: payload.tag,
+          renotify: true,
+          vibrate: [90, 60, 90],
+        });
+      } else {
+        new Notification(payload.title, {
+          body: payload.body,
+          icon: '/favicon.ico',
+          tag: payload.tag,
+          renotify: true,
+          vibrate: [90, 60, 90],
+        });
+      }
+      return 'Preview notifikasi berhasil dikirim.';
+    } catch (err) {
+      console.warn('Preview notification failed:', err);
+      return 'Preview gagal dikirim di browser ini.';
+    }
+  }, [requestBrowserPermission]);
+
+  const runSoundTest = useCallback(async () => {
+    await playNotificationChime();
+    setNotificationStatus((prev) => (prev === 'unsupported' ? prev : 'sound-test'));
+    return 'Tes suara dijalankan.';
+  }, [playNotificationChime]);
+
+  const runRealtimeSmokeTest = useCallback(async () => {
+    if (!selectedContact) {
+      setSmokeStatus('Pilih chat terlebih dahulu');
+      return 'Pilih chat terlebih dahulu.';
+    }
+
+    const marker = `[realtime smoke test] ${Date.now()}`;
+    const payload = selectedContact.is_group
+      ? { sender_id: currentUser.id, group_id: selectedContact.id, content: marker, is_read: false }
+      : { sender_id: currentUser.id, receiver_id: selectedContact.id, content: marker, is_read: false };
+
+    try {
+      setSmokeStatus('Mengirim smoke test...');
+      const { error } = await supabase.from('messages').insert(payload);
+      if (error) throw error;
+
+      await new Promise((resolve) => setTimeout(resolve, 1800));
+
+      const { data, error: checkErr } = await supabase
+        .from('messages')
+        .select('id')
+        .eq('content', marker)
+        .limit(1);
+
+      if (checkErr) throw checkErr;
+
+      const ok = Array.isArray(data) && data.length > 0;
+      setSmokeStatus(ok ? 'Realtime OK' : 'Realtime belum terdeteksi');
+      return ok ? 'Realtime smoke test berhasil.' : 'Smoke test terkirim, tapi belum terdeteksi oleh Supabase realtime.';
+    } catch (err) {
+      console.error('Realtime smoke test failed:', err);
+      setSmokeStatus('Realtime error');
+      return 'Realtime smoke test gagal: ' + err.message;
+    }
+  }, [currentUser, selectedContact]);
+
   // Monitor online/offline status
   useEffect(() => {
     const handleOnline = () => setIsOffline(false);
@@ -221,11 +341,22 @@ export default function ChatWindow({ currentUser, onLogout }) {
           void requestNotificationPermission();
         }
 
-        let { data: myProfile, error: myProfileErr } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', currentUser.id)
-          .single();
+        const withTimeout = (promise, ms, message) => Promise.race([
+          promise,
+          new Promise((_, reject) => {
+            setTimeout(() => reject(new Error(message)), ms);
+          })
+        ]);
+
+        let { data: myProfile, error: myProfileErr } = await withTimeout(
+          supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', currentUser.id)
+            .single(),
+          15000,
+          'Memuat profil user terlalu lama.'
+        );
 
         if (myProfileErr || !myProfile) {
           const fallbackUsername = currentUser.user_metadata?.username || `User_${currentUser.id.slice(0, 6)}`;
@@ -276,14 +407,18 @@ export default function ChatWindow({ currentUser, onLogout }) {
           }));
         }
 
-        await Promise.all([
-          loadUserContacts(currentUser.id, userRole, adminData),
-          loadUserGroups(currentUser.id, userRole),
-        ]);
+        await withTimeout(
+          Promise.all([
+            loadUserContacts(currentUser.id, userRole, adminData),
+            loadUserGroups(currentUser.id, userRole),
+          ]),
+          15000,
+          'Memuat kontak dan grup terlalu lama.'
+        );
 
       } catch (err) {
         console.error('Initialization error:', err);
-        setError('Gagal memuat konfigurasi chat.');
+        setError('Gagal memuat konfigurasi chat. Coba muat ulang halaman.');
       } finally {
         setLoading(false);
       }
@@ -402,6 +537,11 @@ export default function ChatWindow({ currentUser, onLogout }) {
         setPresenceMap(activeMap);
       })
       .subscribe(async (status) => {
+        setRealtimeStatus((prev) => ({
+          ...prev,
+          presence: status === 'SUBSCRIBED' ? 'online' : status === 'CHANNEL_ERROR' ? 'error' : 'connecting',
+        }));
+
         if (status === 'SUBSCRIBED') {
           await presenceChannel.track({
             online_at: new Date().toISOString()
@@ -434,6 +574,13 @@ export default function ChatWindow({ currentUser, onLogout }) {
     if (!currentUser) return;
 
     const callChannel = supabase.channel('call-signaling-room');
+
+    callChannel.subscribe((status) => {
+      setRealtimeStatus((prev) => ({
+        ...prev,
+        calls: status === 'SUBSCRIBED' ? 'online' : status === 'CHANNEL_ERROR' ? 'error' : 'connecting',
+      }));
+    });
     
     callChannel
       .on('broadcast', { event: 'call-offer' }, async ({ payload }) => {
@@ -776,7 +923,12 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
     const channel = supabase
       .channel('messages-room-channel')
-      
+      .subscribe((status) => {
+        setRealtimeStatus((prev) => ({
+          ...prev,
+          messages: status === 'SUBSCRIBED' ? 'online' : status === 'CHANNEL_ERROR' ? 'error' : 'connecting',
+        }));
+      })
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'messages' },
@@ -1238,8 +1390,9 @@ export default function ChatWindow({ currentUser, onLogout }) {
   );
 
   const openUserManagement = async () => {
-    setSelectedDetailUser(null);
+    closeAllModals();
     setShowUserModal(true);
+    setSelectedDetailUser(null);
     setResetPasswords({});
     setResetSuccess({});
     try {
@@ -1526,7 +1679,10 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
           <div className="flex items-center gap-1">
             <button
-              onClick={() => setShowCreateGroupModal(true)}
+              onClick={() => {
+                closeAllModals();
+                setShowCreateGroupModal(true);
+              }}
               className="rounded-xl border border-indigo-500/20 bg-indigo-500/10 p-2 text-indigo-400 hover:bg-indigo-500/20 transition-all"
               title="Buat Grup Baru"
             >
@@ -1535,7 +1691,10 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
             {role === 'guest' && (
               <button
-                onClick={handleOpenAddFriendModal}
+                onClick={() => {
+                  closeAllModals();
+                  setShowAddFriendModal(true);
+                }}
                 className="rounded-xl border border-violet-500/20 bg-violet-500/10 p-2 text-violet-400 hover:bg-violet-500/20 transition-all"
                 title="Tambah Teman Baru"
               >
@@ -1544,7 +1703,10 @@ export default function ChatWindow({ currentUser, onLogout }) {
             )}
 
             <button
-              onClick={() => setShowSettingsModal(true)}
+              onClick={() => {
+                closeAllModals();
+                setShowSettingsModal(true);
+              }}
               className="rounded-xl p-2 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
               title="Pengaturan Profil"
             >
@@ -1754,10 +1916,18 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
           {/* Header Action Buttons (Media Vault, Calls, Search, Logout) */}
           <div className="flex items-center gap-2 shrink-0">
+            <div className="hidden items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 text-[10px] font-bold text-emerald-300 md:flex">
+              <span className={`h-2 w-2 rounded-full ${realtimeStatus.messages === 'online' && realtimeStatus.presence === 'online' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+              Realtime {realtimeStatus.messages === 'online' ? 'OK' : 'check'}
+            </div>
+
             {selectedContact && (
               <button
                 type="button"
-                onClick={() => setShowVaultModal(true)}
+                onClick={() => {
+                  closeAllModals();
+                  setShowVaultModal(true);
+                }}
                 className="rounded-xl border border-white/5 bg-slate-900 p-2.5 text-slate-400 hover:bg-indigo-600 hover:text-white transition-all"
                 title="Brankas Galeri Media & File Tersimpan"
               >
@@ -2367,7 +2537,12 @@ export default function ChatWindow({ currentUser, onLogout }) {
               </div>
 
               <div className="border-t border-white/5 pt-3 space-y-3">
-                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Perizinan Notifikasi</h4>
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">Perizinan Notifikasi</h4>
+                  <span className="rounded-full border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 text-[9px] font-bold uppercase text-violet-300">
+                    {notificationStatus === 'unsupported' ? 'unsupported' : notificationStatus}
+                  </span>
+                </div>
 
                 <div className="flex items-center justify-between">
                   <span className="text-xs text-slate-300">Suara Notifikasi Chat</span>
@@ -2387,6 +2562,38 @@ export default function ChatWindow({ currentUser, onLogout }) {
                     onChange={(e) => setNotifyPush(e.target.checked)}
                     className="h-4 w-4 rounded accent-violet-600"
                   />
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      runSoundTest();
+                    }}
+                    className="rounded-lg border border-white/10 bg-slate-950 px-2 py-2 text-[10px] font-bold text-slate-200 hover:border-violet-500/40"
+                  >
+                    Test Suara
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const result = await runNotificationPreview();
+                      alert(result);
+                    }}
+                    className="rounded-lg border border-white/10 bg-slate-950 px-2 py-2 text-[10px] font-bold text-slate-200 hover:border-violet-500/40"
+                  >
+                    Preview
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const result = await requestBrowserPermission();
+                      alert(result === 'granted' ? 'Izin notifikasi granted.' : `Izin notifikasi: ${result}`);
+                    }}
+                    className="rounded-lg border border-white/10 bg-slate-950 px-2 py-2 text-[10px] font-bold text-slate-200 hover:border-violet-500/40"
+                  >
+                    Permission
+                  </button>
                 </div>
               </div>
 
@@ -2471,6 +2678,23 @@ export default function ChatWindow({ currentUser, onLogout }) {
                 <p className="text-[10px] uppercase tracking-wider text-slate-500">Grup Aktif</p>
                 <p className="mt-1 text-xl font-extrabold text-amber-400">{groups.length}</p>
               </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-3 border-b border-white/5 bg-slate-950/30 px-6 py-3 shrink-0">
+              <div className="flex items-center gap-2 text-[11px] text-slate-300">
+                <span className={`h-2 w-2 rounded-full ${realtimeStatus.messages === 'online' && realtimeStatus.presence === 'online' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+                Realtime health: {realtimeStatus.messages === 'online' ? 'stable' : 'connecting'}
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  const result = await runRealtimeSmokeTest();
+                  alert(result);
+                }}
+                className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-1.5 text-[10px] font-bold uppercase text-emerald-300 hover:bg-emerald-500/20"
+              >
+                Realtime smoke test
+              </button>
             </div>
 
             <div className="flex items-center gap-2 border-b border-white/5 bg-slate-950/30 px-6 py-3 shrink-0">

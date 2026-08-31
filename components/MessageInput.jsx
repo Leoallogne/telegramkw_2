@@ -615,87 +615,28 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
 
           {/* Action Toolbar */}
           <div className="flex items-center gap-1.5 shrink-0">
-            <div className="hidden md:flex items-center gap-1.5">
+            <div className="relative">
               <button
                 type="button"
-                onClick={() => { setShowEmojiPicker(!showEmojiPicker); setShowTimerPicker(false); setShowQuickActions(false); }}
+                onClick={() => {
+                  setShowQuickActions((prev) => !prev);
+                  setShowEmojiPicker(false);
+                  setShowTimerPicker(false);
+                }}
                 disabled={disabled || isSending || isUploading}
-                className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-slate-950/60 text-slate-400 hover:bg-slate-800 hover:text-amber-400 transition-all duration-200 disabled:opacity-50"
-                title="Emoji"
-              >
-                <Smile className="h-5 w-5" />
-              </button>
-
-              <button
-                type="button"
-                onClick={() => { setShowTimerPicker(!showTimerPicker); setShowEmojiPicker(false); setShowQuickActions(false); }}
-                disabled={disabled || isSending || isUploading}
-                className={`flex h-11 items-center gap-1 px-2.5 rounded-xl border transition-all duration-200 disabled:opacity-50 ${
-                  selectedTimer
-                    ? 'border-amber-500/40 bg-amber-500/15 text-amber-300 font-bold'
-                    : 'border-white/10 bg-slate-950/60 text-slate-400 hover:bg-slate-800 hover:text-amber-400'
-                }`}
-                title="Setel Timer Pesan Rahasia"
-              >
-                <Clock className="h-4 w-4" />
-                {selectedTimer && <span className="text-xs font-mono">{selectedTimer}s</span>}
-              </button>
-
-              <button
-                type="button"
-                onClick={handleShareLocation}
-                disabled={disabled || isSending || isUploading || isGettingLocation}
-                className="flex h-11 w-11 items-center justify-center rounded-xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 hover:text-emerald-300 transition-all duration-200 disabled:opacity-50"
-                title="Bagi Lokasi GPS Real-Time"
-              >
-                {isGettingLocation ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                ) : (
-                  <MapPin className="h-5 w-5" />
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => imageInputRef.current?.click()}
-                disabled={disabled || isSending || isUploading}
-                className="flex h-11 items-center gap-1.5 rounded-xl border border-indigo-500/20 bg-indigo-500/10 px-2.5 text-indigo-400 hover:bg-indigo-500/20 hover:text-indigo-300 transition-all duration-200 disabled:opacity-50"
-                title="Unggah Foto / Gambar"
-              >
-                <ImageIcon className="h-5 w-5" />
-                <span className="hidden sm:inline text-xs font-semibold">Foto</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={disabled || isSending || isUploading}
-                className="flex h-11 items-center gap-1.5 rounded-xl border border-violet-500/20 bg-violet-500/10 px-2.5 text-violet-400 hover:bg-violet-500/20 hover:text-violet-300 transition-all duration-200 disabled:opacity-50"
-                title="Unggah File / Dokumen"
-              >
-                <Paperclip className="h-5 w-5" />
-                <span className="hidden sm:inline text-xs font-semibold">File</span>
-              </button>
-            </div>
-
-            <div className="relative md:hidden">
-              <button
-                type="button"
-                onClick={() => setShowQuickActions((prev) => !prev)}
-                disabled={disabled || isSending || isUploading}
-                className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-slate-950/60 text-slate-300 hover:bg-slate-800 hover:text-violet-300 transition-all duration-200 disabled:opacity-50"
+                className="flex h-11 w-11 items-center justify-center rounded-xl border border-violet-500/30 bg-gradient-to-br from-violet-600/25 to-indigo-600/25 text-violet-300 shadow-md shadow-violet-900/30 transition-all duration-200 hover:bg-violet-600/20 hover:text-white disabled:opacity-50"
                 title="Menu fitur"
               >
                 <MoreHorizontal className="h-5 w-5" />
               </button>
 
               {showQuickActions && (
-                <div className="absolute bottom-14 left-0 z-40 w-56 rounded-2xl border border-white/10 bg-slate-900/95 p-2 shadow-2xl backdrop-blur-xl animate-zoom-in">
+                <div className="absolute bottom-14 left-0 z-40 w-64 rounded-2xl border border-white/10 bg-slate-900/95 p-2.5 shadow-2xl backdrop-blur-xl animate-zoom-in">
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
                       onClick={() => { setShowQuickActions(false); setShowEmojiPicker((prev) => !prev); setShowTimerPicker(false); }}
-                      className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/60 px-2 py-2 text-left text-xs font-medium text-slate-200"
+                      className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/60 px-2.5 py-2.5 text-left text-xs font-medium text-slate-200"
                     >
                       <Smile className="h-4 w-4 text-amber-400" />
                       Emoji
@@ -704,7 +645,7 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
                     <button
                       type="button"
                       onClick={() => { setShowQuickActions(false); setShowTimerPicker((prev) => !prev); setShowEmojiPicker(false); }}
-                      className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/60 px-2 py-2 text-left text-xs font-medium text-slate-200"
+                      className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/60 px-2.5 py-2.5 text-left text-xs font-medium text-slate-200"
                     >
                       <Clock className="h-4 w-4 text-amber-400" />
                       {selectedTimer ? `${selectedTimer}s` : 'Timer'}
@@ -713,7 +654,7 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
                     <button
                       type="button"
                       onClick={() => { setShowQuickActions(false); handleShareLocation(); }}
-                      className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/60 px-2 py-2 text-left text-xs font-medium text-slate-200"
+                      className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/60 px-2.5 py-2.5 text-left text-xs font-medium text-slate-200"
                     >
                       <MapPin className="h-4 w-4 text-emerald-400" />
                       Lokasi
@@ -722,7 +663,7 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
                     <button
                       type="button"
                       onClick={() => { setShowQuickActions(false); imageInputRef.current?.click(); }}
-                      className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/60 px-2 py-2 text-left text-xs font-medium text-slate-200"
+                      className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/60 px-2.5 py-2.5 text-left text-xs font-medium text-slate-200"
                     >
                       <ImageIcon className="h-4 w-4 text-indigo-400" />
                       Foto
@@ -731,7 +672,7 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
                     <button
                       type="button"
                       onClick={() => { setShowQuickActions(false); fileInputRef.current?.click(); }}
-                      className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/60 px-2 py-2 text-left text-xs font-medium text-slate-200"
+                      className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/60 px-2.5 py-2.5 text-left text-xs font-medium text-slate-200"
                     >
                       <Paperclip className="h-4 w-4 text-violet-400" />
                       File
@@ -740,7 +681,7 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
                     <button
                       type="button"
                       onClick={() => { setShowQuickActions(false); startRecording(); }}
-                      className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/60 px-2 py-2 text-left text-xs font-medium text-slate-200"
+                      className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/60 px-2.5 py-2.5 text-left text-xs font-medium text-slate-200"
                     >
                       <Mic className="h-4 w-4 text-pink-400" />
                       Suara
