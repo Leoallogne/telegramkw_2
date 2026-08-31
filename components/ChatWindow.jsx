@@ -5,9 +5,57 @@ import Image from 'next/image';
 import { supabase } from '@/lib/supabaseClient';
 import MessageBubble from './MessageBubble';
 import MessageInput from './MessageInput';
+import { useCallState } from '@/hooks/useCallState';
+import { useNotification } from '@/hooks/useNotification';
+import { useWebRTC } from '@/hooks/useWebRTC';
 import { LogOut, MessageSquare, Menu, X, Shield, RefreshCw, Users, Trash2, AlertTriangle, WifiOff, KeyRound, Check, Search, Pin, Download, UserPlus, Settings, Phone, Video, Mic, MicOff, VideoOff, PhoneOff, PhoneCall, Flame, MapPin, Folder, Eye, PlusCircle, UserCheck, Image as ImageIcon, FileText } from 'lucide-react';
 
 export default function ChatWindow({ currentUser, onLogout }) {
+  // ========================
+  // Initialize Custom Hooks
+  // ========================
+  const callStateHook = useCallState();
+  const notificationHook = useNotification();
+  const webrtcHook = useWebRTC();
+
+  // Extract from hooks
+  const { 
+    callState, 
+    callStateRef, 
+    callTimeoutRef, 
+    callCleanupLockRef,
+    iceCandidatesQueueRef,
+    localStreamRef,
+    peerConnectionRef,
+    remoteStreamRef,
+    updateCallState,
+    clearCallTimers,
+    cleanupCall,
+    setCallTimeout,
+  } = callStateHook;
+
+  const { 
+    notificationStatus,
+    notificationThrottleRef,
+    lastToneAtRef,
+    setNotificationStatus,
+    requestNotificationPermission,
+    showWebNotification,
+    playNotificationChime,
+    cleanupNotifications,
+  } = notificationHook;
+
+  const {
+    getRtcConfig,
+    setupConnectionListeners,
+    addIceCandidates,
+    getMediaStream,
+    stopMediaStream,
+  } = webrtcHook;
+
+  // ========================
+  // Component State
+  // ========================
   const [role, setRole] = useState('guest');
   const [myProfileData, setMyProfileData] = useState(null);
   const [adminProfile, setAdminProfile] = useState(null);
@@ -63,15 +111,10 @@ export default function ChatWindow({ currentUser, onLogout }) {
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSuccess, setSettingsSuccess] = useState(false);
 
-  // WebRTC Call State
-  const [callState, setCallState] = useState(null);
-  const peerConnectionRef = useRef(null);
-  const localStreamRef = useRef(null);
-  const remoteStreamRef = useRef(null);
+  // WebRTC Call State - additional refs
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const remoteAudioRef = useRef(null);
-  const iceCandidatesQueueRef = useRef([]);
 
   const selectedContactRef = useRef(null);
   const adminProfileRef = useRef(null);
@@ -84,7 +127,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
   const [activeLightboxUrl, setActiveLightboxUrl] = useState(null);
 
   // Realtime & notification health state
-  const [notificationStatus, setNotificationStatus] = useState('unknown');
   const [realtimeStatus, setRealtimeStatus] = useState({
     messages: 'connecting',
     presence: 'connecting',
@@ -130,78 +172,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
     roleRef.current = role;
   }, [role]);
 
-  const requestNotificationPermission = useCallback(async () => {
-    if (typeof window === 'undefined' || !('Notification' in window)) return 'unsupported';
-
-    if (Notification.permission === 'default') {
-      const permission = await Notification.requestPermission();
-      return permission;
-    }
-
-    return Notification.permission;
-  }, []);
-
-  const showWebNotification = useCallback(async ({ title, body, tag = 'chat-message' }) => {
-    if (typeof window === 'undefined' || !notifyPush) return;
-
-    const permission = await requestNotificationPermission();
-    if (permission !== 'granted') return;
-
-    try {
-      const registration = await navigator.serviceWorker?.ready;
-      if (registration && typeof registration.showNotification === 'function') {
-        registration.showNotification(title, {
-          body,
-          icon: '/favicon.ico',
-          tag,
-          renotify: true,
-          vibrate: [120, 60, 120],
-        });
-        return;
-      }
-
-      new Notification(title, {
-        body,
-        icon: '/favicon.ico',
-        tag,
-        renotify: true,
-        vibrate: [120, 60, 120],
-      });
-    } catch (err) {
-      console.warn('Browser notification failed:', err);
-    }
-  }, [notifyPush, requestNotificationPermission]);
-
-  // Web Audio API Synthesizer
-  const playNotificationChime = useCallback(async () => {
-    if (!notifySound || typeof window === 'undefined') return;
-    try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (!AudioCtx) return;
-      const ctx = new AudioCtx();
-      if (ctx.state === 'suspended') {
-        await ctx.resume();
-      }
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(523.25, ctx.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(659.25, ctx.currentTime + 0.15);
-
-      gain.gain.setValueAtTime(0.12, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-
-      osc.start();
-      osc.stop(ctx.currentTime + 0.3);
-    } catch {
-      // Ignore audio synthesis errors
-    }
-  }, [notifySound]);
-
   const closeAllModals = useCallback(() => {
     setShowCreateGroupModal(false);
     setShowVaultModal(false);
@@ -221,7 +191,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
     const permission = await Notification.requestPermission();
     setNotificationStatus(permission);
     return permission;
-  }, []);
+  }, [setNotificationStatus]);
 
   const runNotificationPreview = useCallback(async () => {
     if (typeof window === 'undefined' || !('Notification' in window)) {
@@ -269,13 +239,13 @@ export default function ChatWindow({ currentUser, onLogout }) {
       console.warn('Preview notification failed:', err);
       return 'Preview gagal dikirim di browser ini.';
     }
-  }, [requestBrowserPermission]);
+  }, [requestBrowserPermission, setNotificationStatus]);
 
   const runSoundTest = useCallback(async () => {
     await playNotificationChime();
     setNotificationStatus((prev) => (prev === 'unsupported' ? prev : 'sound-test'));
     return 'Tes suara dijalankan.';
-  }, [playNotificationChime]);
+  }, [playNotificationChime, setNotificationStatus]);
 
   const runRealtimeSmokeTest = useCallback(async () => {
     if (!selectedContact) {
@@ -331,6 +301,96 @@ export default function ChatWindow({ currentUser, onLogout }) {
     };
   }, []);
 
+  const loadUserContacts = useCallback(async (userId, userRole, adminData) => {
+    try {
+      if (userRole === 'admin') {
+        const { data: guestProfiles } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('role', 'guest')
+          .order('is_pinned', { ascending: false })
+          .order('created_at', { ascending: false });
+
+        setContacts(guestProfiles || []);
+        guestProfiles?.forEach((g) => {
+          setProfilesMap((prev) => ({ ...prev, [g.id]: g.username }));
+        });
+      } else {
+        const { data: friendshipRows } = await supabase
+          .from('friendships')
+          .select('friend_id, user_id')
+          .or(`user_id.eq.${userId},friend_id.eq.${userId}`);
+
+        const friendIds = friendshipRows?.map((f) => f.user_id === userId ? f.friend_id : f.user_id) || [];
+
+        const map = {};
+        friendIds.forEach((id) => {
+          map[id] = true;
+        });
+        setFriendshipMap(map);
+
+        let friendProfiles = [];
+        if (friendIds.length > 0) {
+          const { data: profs } = await supabase
+            .from('profiles')
+            .select('*')
+            .in('id', friendIds);
+          friendProfiles = profs || [];
+        }
+
+        const contactList = [];
+        if (adminData && adminData.id !== userId) {
+          contactList.push({ ...adminData, is_admin_contact: true });
+        }
+
+        friendProfiles.forEach((f) => {
+          if (!contactList.some((c) => c.id === f.id)) {
+            contactList.push(f);
+          }
+          setProfilesMap((prev) => ({ ...prev, [f.id]: f.username }));
+        });
+
+        setContacts(contactList);
+      }
+    } catch (err) {
+      console.error('Error loading contacts:', err);
+    }
+  }, []);
+
+  const loadUserGroups = useCallback(async (userId, userRole) => {
+    try {
+      if (userRole === 'admin') {
+        const { data: allGroups } = await supabase
+          .from('groups')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        setGroups(allGroups || []);
+      } else {
+        const { data: memberRows } = await supabase
+          .from('group_members')
+          .select('group_id')
+          .eq('user_id', userId);
+
+        const groupIds = memberRows?.map((m) => m.group_id) || [];
+
+        if (groupIds.length > 0) {
+          const { data: joinedGroups } = await supabase
+            .from('groups')
+            .select('*')
+            .in('id', groupIds)
+            .order('created_at', { ascending: false });
+
+          setGroups(joinedGroups || []);
+        } else {
+          setGroups([]);
+        }
+      }
+    } catch (err) {
+      console.error('Error loading groups:', err);
+    }
+  }, []);
+
   // 1. Fetch user role, profiles, friendships, and groups
   useEffect(() => {
     const initializeChat = async () => {
@@ -377,7 +437,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
             throw myProfileErr;
           }
         }
-        
+
         setMyProfileData(myProfile);
         const userRole = myProfile.role || 'guest';
         setRole(userRole);
@@ -425,99 +485,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
     };
 
     initializeChat();
-  }, [currentUser, notifyPush, requestNotificationPermission]);
-
-  // Load Contacts list
-  async function loadUserContacts(userId, userRole, adminData) {
-    try {
-      if (userRole === 'admin') {
-        const { data: guestProfiles } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('role', 'guest')
-          .order('is_pinned', { ascending: false })
-          .order('created_at', { ascending: false });
-
-        setContacts(guestProfiles || []);
-        guestProfiles?.forEach((g) => {
-          setProfilesMap((prev) => ({ ...prev, [g.id]: g.username }));
-        });
-      } else {
-        const { data: friendshipRows } = await supabase
-          .from('friendships')
-          .select('friend_id, user_id')
-          .or(`user_id.eq.${userId},friend_id.eq.${userId}`);
-
-        const friendIds = friendshipRows?.map((f) => f.user_id === userId ? f.friend_id : f.user_id) || [];
-        
-        const map = {};
-        friendIds.forEach((id) => { map[id] = true; });
-        setFriendshipMap(map);
-
-        let friendProfiles = [];
-        if (friendIds.length > 0) {
-          const { data: profs } = await supabase
-            .from('profiles')
-            .select('*')
-            .in('id', friendIds);
-          friendProfiles = profs || [];
-        }
-
-        const contactList = [];
-        if (adminData && adminData.id !== userId) {
-          contactList.push({ ...adminData, is_admin_contact: true });
-        }
-
-        friendProfiles.forEach((f) => {
-          if (!contactList.some((c) => c.id === f.id)) {
-            contactList.push(f);
-          }
-          setProfilesMap((prev) => ({ ...prev, [f.id]: f.username }));
-        });
-
-        setContacts(contactList);
-      }
-    } catch (err) {
-      console.error('Error loading contacts:', err);
-    }
-  }
-
-  // Load Groups (Admin gets Master Access to ALL groups, Guests get joined groups)
-  async function loadUserGroups(userId, userRole) {
-    try {
-      if (userRole === 'admin') {
-        // Admin gets Master Access to ALL groups
-        const { data: allGroups } = await supabase
-          .from('groups')
-          .select('*')
-          .order('created_at', { ascending: false });
-        
-        setGroups(allGroups || []);
-      } else {
-        // Guest user gets joined groups
-        const { data: memberRows } = await supabase
-          .from('group_members')
-          .select('group_id')
-          .eq('user_id', userId);
-
-        const groupIds = memberRows?.map((m) => m.group_id) || [];
-
-        if (groupIds.length > 0) {
-          const { data: joinedGroups } = await supabase
-            .from('groups')
-            .select('*')
-            .in('id', groupIds)
-            .order('created_at', { ascending: false });
-          
-          setGroups(joinedGroups || []);
-        } else {
-          setGroups([]);
-        }
-      }
-    } catch (err) {
-      console.error('Error loading groups:', err);
-    }
-  }
+  }, [currentUser, notifyPush, requestNotificationPermission, loadUserContacts, loadUserGroups]);
 
   // Realtime Presence Tracker Setup
   useEffect(() => {
@@ -555,6 +523,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
   }, [currentUser, playNotificationChime, notifyPush, notifySound, requestNotificationPermission, showWebNotification]);
 
   // Bind WebRTC streams to DOM video/audio elements
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (callState) {
       if (localVideoRef.current && localStreamRef.current) {
@@ -585,24 +554,37 @@ export default function ChatWindow({ currentUser, onLogout }) {
     callChannel
       .on('broadcast', { event: 'call-offer' }, async ({ payload }) => {
         if (payload.targetId === currentUser.id) {
-          playNotificationChime();
-          setCallState({
+          const incomingCall = {
             targetId: payload.callerId,
             targetName: payload.callerName,
             isVideo: payload.isVideo,
             isIncoming: true,
             isConnected: false,
+            status: 'ringing',
             sdpOffer: payload.offer,
             isMuted: false,
-            isCameraOff: false
-          });
+            isCameraOff: false,
+            error: null,
+          };
+
+          if (callStateRef.current && callStateRef.current.targetId === payload.callerId && callStateRef.current.status === 'ringing') {
+            return;
+          }
+
+          playNotificationChime();
+          updateCallState(incomingCall);
         }
       })
       .on('broadcast', { event: 'call-answer' }, async ({ payload }) => {
         if (payload.targetId === currentUser.id && peerConnectionRef.current) {
           try {
             await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(payload.answer));
-            setCallState((prev) => prev ? { ...prev, isConnected: true } : null);
+            updateCallState((prev) => ({
+              ...prev,
+              isConnected: true,
+              status: 'connected',
+              error: null,
+            }));
 
             while (iceCandidatesQueueRef.current.length > 0) {
               const cand = iceCandidatesQueueRef.current.shift();
@@ -610,6 +592,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
             }
           } catch (e) {
             console.error('Error setting remote description answer:', e);
+            updateCallState((prev) => ({ ...prev, status: 'error', error: 'Gagal menghubungkan panggilan.' }));
           }
         }
       })
@@ -643,23 +626,9 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
     return () => {
       supabase.removeChannel(callChannel);
+      clearCallTimers();
     };
-  }, [currentUser, playNotificationChime]);
-
-  // Clean up WebRTC streams
-  function cleanupCall() {
-    if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => track.stop());
-      localStreamRef.current = null;
-    }
-    if (peerConnectionRef.current) {
-      peerConnectionRef.current.close();
-      peerConnectionRef.current = null;
-    }
-    remoteStreamRef.current = null;
-    iceCandidatesQueueRef.current = [];
-    setCallState(null);
-  }
+  }, [currentUser, clearCallTimers, cleanupCall]);
 
   // Start Outgoing WebRTC Call
   const startCall = async (isVideo) => {
@@ -676,15 +645,14 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
 
     try {
+      cleanupCall();
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
         video: isVideo
       });
       localStreamRef.current = stream;
 
-      const pc = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-      });
+      const pc = new RTCPeerConnection(getRtcConfig());
       peerConnectionRef.current = pc;
 
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
@@ -693,6 +661,24 @@ export default function ChatWindow({ currentUser, onLogout }) {
         remoteStreamRef.current = event.streams[0];
         if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
         if (remoteAudioRef.current) remoteAudioRef.current.srcObject = event.streams[0];
+      };
+
+      pc.onconnectionstatechange = () => {
+        const state = pc.connectionState;
+        if (state === 'connected') {
+          updateCallState((prev) => ({ ...prev, status: 'connected', isConnected: true, error: null }));
+        } else if (state === 'failed' || state === 'disconnected') {
+          updateCallState((prev) => ({ ...prev, status: 'reconnecting', error: 'Koneksi panggilan terputus, mencoba menyambung ulang...' }));
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        const state = pc.iceConnectionState;
+        if (state === 'connected') {
+          updateCallState((prev) => ({ ...prev, status: 'connected', isConnected: true, error: null }));
+        } else if (state === 'failed' || state === 'closed') {
+          updateCallState((prev) => ({ ...prev, status: 'error', error: 'Koneksi ICE gagal. Silakan coba lagi.' }));
+        }
       };
 
       pc.onicecandidate = (event) => {
@@ -705,30 +691,41 @@ export default function ChatWindow({ currentUser, onLogout }) {
         }
       };
 
-      const offer = await pc.createOffer();
+      const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: isVideo });
       await pc.setLocalDescription(offer);
 
-      setCallState({
+      updateCallState({
         targetId: selectedContact.id,
         targetName: selectedContact.username,
         isVideo,
         isIncoming: false,
         isConnected: false,
+        status: 'connecting',
         isMuted: false,
-        isCameraOff: false
+        isCameraOff: false,
+        error: null,
       });
 
-      callChannelRef.current.send({
-        type: 'broadcast',
-        event: 'call-offer',
-        payload: {
-          callerId: currentUser.id,
-          callerName: myProfileData?.username || 'User',
-          targetId: selectedContact.id,
-          isVideo,
-          offer
+      callTimeoutRef.current = setTimeout(() => {
+        if (callStateRef.current?.status === 'connecting' || callStateRef.current?.status === 'ringing') {
+          cleanupCall();
+          alert('Panggilan tidak terhubung dalam waktu yang ditentukan.');
         }
-      });
+      }, 30000);
+
+      if (callChannelRef.current) {
+        callChannelRef.current.send({
+          type: 'broadcast',
+          event: 'call-offer',
+          payload: {
+            callerId: currentUser.id,
+            callerName: myProfileData?.username || 'User',
+            targetId: selectedContact.id,
+            isVideo,
+            offer
+          }
+        });
+      }
 
     } catch (err) {
       console.error('Start call error:', err);
@@ -757,9 +754,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
       });
       localStreamRef.current = stream;
 
-      const pc = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-      });
+      const pc = new RTCPeerConnection(getRtcConfig());
       peerConnectionRef.current = pc;
 
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
@@ -768,6 +763,24 @@ export default function ChatWindow({ currentUser, onLogout }) {
         remoteStreamRef.current = event.streams[0];
         if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
         if (remoteAudioRef.current) remoteAudioRef.current.srcObject = event.streams[0];
+      };
+
+      pc.onconnectionstatechange = () => {
+        const state = pc.connectionState;
+        if (state === 'connected') {
+          updateCallState((prev) => ({ ...prev, status: 'connected', isConnected: true, error: null }));
+        } else if (state === 'failed' || state === 'disconnected') {
+          updateCallState((prev) => ({ ...prev, status: 'reconnecting', error: 'Koneksi panggilan terputus, mencoba menyambung ulang...' }));
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        const state = pc.iceConnectionState;
+        if (state === 'connected') {
+          updateCallState((prev) => ({ ...prev, status: 'connected', isConnected: true, error: null }));
+        } else if (state === 'failed' || state === 'closed') {
+          updateCallState((prev) => ({ ...prev, status: 'error', error: 'Koneksi ICE gagal. Silakan coba lagi.' }));
+        }
       };
 
       pc.onicecandidate = (event) => {
@@ -780,8 +793,16 @@ export default function ChatWindow({ currentUser, onLogout }) {
         }
       };
 
+      updateCallState((prev) => ({
+        ...prev,
+        status: 'connecting',
+        isIncoming: false,
+        isConnected: false,
+        error: null,
+      }));
+
       await pc.setRemoteDescription(new RTCSessionDescription(callState.sdpOffer));
-      const answer = await pc.createAnswer();
+      const answer = await pc.createAnswer({ offerToReceiveAudio: true, offerToReceiveVideo: callState.isVideo });
       await pc.setLocalDescription(answer);
 
       while (iceCandidatesQueueRef.current.length > 0) {
@@ -789,13 +810,20 @@ export default function ChatWindow({ currentUser, onLogout }) {
         await pc.addIceCandidate(new RTCIceCandidate(cand));
       }
 
-      setCallState((prev) => ({ ...prev, isConnected: true, isIncoming: false }));
+      if (callChannelRef.current) {
+        callChannelRef.current.send({
+          type: 'broadcast',
+          event: 'call-answer',
+          payload: { answer, callerId: currentUser.id, targetId: callState.targetId }
+        });
+      }
 
-      callChannelRef.current.send({
-        type: 'broadcast',
-        event: 'call-answer',
-        payload: { answer, callerId: currentUser.id, targetId: callState.targetId }
-      });
+      callTimeoutRef.current = setTimeout(() => {
+        if (callStateRef.current?.status === 'connecting') {
+          cleanupCall();
+          alert('Panggilan gagal tersambung. Silakan coba lagi.');
+        }
+      }, 30000);
 
     } catch (err) {
       console.error('Accept call error:', err);
@@ -902,7 +930,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
   };
 
   const markMessagesAsRead = useCallback(async (partnerId) => {
-    if (!partnerId) return;
+    if (!partnerId || !currentUser) return;
     try {
       const { error: updateErr } = await supabase
         .from('messages')
@@ -915,7 +943,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
     } catch (err) {
       console.warn('Could not mark messages as read:', err.message);
     }
-  }, [currentUser?.id]);
+  }, [currentUser]);
 
   // Realtime Messages & Reactions Subscription Setup
   useEffect(() => {
@@ -946,18 +974,16 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
             if (newMsg.sender_id !== currentUser.id) {
               const shouldAlert = document.visibilityState === 'hidden' || !activeTarget || !isMatch;
-              if (shouldAlert) {
+              if (shouldAlert || notifySound) {
                 await playNotificationChime();
-                if (notifyPush) {
-                  const senderName = profilesMap[newMsg.sender_id] || 'Pesan baru';
-                  await showWebNotification({
-                    title: senderName,
-                    body: newMsg.content?.slice(0, 120) || 'Anda menerima pesan baru',
-                    tag: newMsg.id,
-                  });
-                }
-              } else {
-                await playNotificationChime();
+              }
+              if (notifyPush && shouldAlert) {
+                const senderName = profilesMap[newMsg.sender_id] || 'Pesan baru';
+                await showWebNotification({
+                  title: senderName,
+                  body: newMsg.content?.slice(0, 120) || 'Anda menerima pesan baru',
+                  tag: newMsg.id,
+                });
               }
               if (!activeTarget?.is_group) await markMessagesAsRead(activeTarget.id);
             }
@@ -970,16 +996,16 @@ export default function ChatWindow({ currentUser, onLogout }) {
               [key]: true,
             }));
 
-            if (notifyPush || notifySound) {
+            if (notifySound) {
               await playNotificationChime();
-              if (notifyPush) {
-                const senderName = profilesMap[newMsg.sender_id] || 'Pesan baru';
-                await showWebNotification({
-                  title: senderName,
-                  body: newMsg.content?.slice(0, 120) || 'Anda menerima pesan baru',
-                  tag: newMsg.id,
-                });
-              }
+            }
+            if (notifyPush) {
+              const senderName = profilesMap[newMsg.sender_id] || 'Pesan baru';
+              await showWebNotification({
+                title: senderName,
+                body: newMsg.content?.slice(0, 120) || 'Anda menerima pesan baru',
+                tag: newMsg.id,
+              });
             }
           }
         }

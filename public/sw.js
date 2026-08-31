@@ -18,6 +18,7 @@ self.addEventListener('message', (event) => {
     tag: data.tag || 'chat-message',
     renotify: true,
     vibrate: [120, 50, 120],
+    data: { url: data.url || '/' },
   };
 
   event.waitUntil(self.registration.showNotification(title, options));
@@ -37,20 +38,16 @@ self.addEventListener('push', (event) => {
 });
 
 self.addEventListener('notificationclick', (event) => {
+  const notificationUrl = event.notification?.data?.url || '/';
   event.notification.close();
+
   event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true, url: notificationUrl }).then((clientList) => {
       if (clientList.length > 0) {
-        let client = clientList[0];
-        for (let i = 0; i < clientList.length; i++) {
-          if (clientList[i].focused) {
-            client = clientList[i];
-            break;
-          }
-        }
+        const client = clientList[0];
         return client.focus();
       }
-      return self.clients.openWindow('/');
+      return self.clients.openWindow(notificationUrl);
     })
   );
 });
