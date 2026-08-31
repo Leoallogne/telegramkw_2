@@ -923,12 +923,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
     const channel = supabase
       .channel('messages-room-channel')
-      .subscribe((status) => {
-        setRealtimeStatus((prev) => ({
-          ...prev,
-          messages: status === 'SUBSCRIBED' ? 'online' : status === 'CHANNEL_ERROR' ? 'error' : 'connecting',
-        }));
-      })
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'messages' },
@@ -990,7 +984,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
           }
         }
       )
-
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'messages' },
@@ -1001,7 +994,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
           );
         }
       )
-
       .on(
         'postgres_changes',
         { event: 'DELETE', schema: 'public', table: 'messages' },
@@ -1010,7 +1002,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
           setMessages((prev) => prev.filter((m) => m.id !== deletedMsg.id));
         }
       )
-
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'message_reactions' },
@@ -1037,7 +1028,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
           }
         }
       )
-
       .on('broadcast', { event: 'typing' }, (payload) => {
         const { userId, isTyping } = payload.payload;
         setTypingUsers((prev) => ({
@@ -1045,8 +1035,12 @@ export default function ChatWindow({ currentUser, onLogout }) {
           [userId]: isTyping,
         }));
       })
-      
-      .subscribe();
+      .subscribe((status) => {
+        setRealtimeStatus((prev) => ({
+          ...prev,
+          messages: status === 'SUBSCRIBED' ? 'online' : status === 'CHANNEL_ERROR' ? 'error' : 'connecting',
+        }));
+      });
 
     channelRef.current = channel;
 
