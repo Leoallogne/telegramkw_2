@@ -1670,213 +1670,341 @@ export default function ChatWindow({ currentUser, onLogout }) {
       {isSidebarOpen && (
         <div
           onClick={() => setIsSidebarOpen(false)}
-          className="fixed inset-0 z-10 bg-black/60 backdrop-blur-sm transition-opacity duration-300 md:hidden"
+          className="fixed inset-0 z-10 bg-black/70 backdrop-blur-md transition-all duration-300 md:hidden"
         />
       )}
 
-      {/* WhatsApp Style Sidebar */}
+      {/* ═══════════════════════════════════════ SIDEBAR ═══════════════════════════════════════ */}
       <div
-        className={`fixed inset-y-0 left-0 z-20 flex w-80 shrink-0 flex-col border-r border-white/5 bg-slate-900 transition-transform duration-300 md:static md:translate-x-0 ${
-          isSidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
+        className={`fixed inset-y-0 left-0 z-20 flex flex-col bg-slate-900/95 backdrop-blur-xl border-r border-white/[0.06] transition-all duration-300 ease-in-out
+          w-[300px] sm:w-80
+          md:static md:translate-x-0 md:w-80 lg:w-[320px]
+          ${ isSidebarOpen ? 'translate-x-0 shadow-2xl shadow-black/50' : '-translate-x-full' }
+        `}
       >
-        {/* Sidebar Header */}
-        <div className="flex h-16 items-center justify-between border-b border-white/5 px-4 bg-slate-900/80 backdrop-blur-md">
-          <div className="flex items-center gap-3">
+        {/* ── Sidebar Header ── */}
+        <div className="relative flex shrink-0 flex-col border-b border-white/[0.06] bg-gradient-to-b from-slate-900 to-slate-900/0 px-4 pt-4 pb-3">
+          {/* Top Row: Avatar + Name + Actions */}
+          <div className="flex items-center justify-between gap-3">
+            {/* My Avatar + Info */}
             <button
-              onClick={() => setShowSettingsModal(true)}
-              className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-500 font-bold text-white shadow-md hover:scale-105 transition-transform"
-              title="Pengaturan Profil"
+              onClick={() => { closeAllModals(); setShowSettingsModal(true); }}
+              className="flex items-center gap-3 min-w-0 flex-1 group/avatar"
+              title="Lihat & Edit Profil Saya"
             >
-              {myProfileData?.username?.charAt(0).toUpperCase() || 'U'}
-              <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-slate-900" />
+              <div className="relative shrink-0">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-tr from-violet-600 via-indigo-500 to-purple-500 text-base font-extrabold text-white shadow-lg shadow-violet-900/40 ring-2 ring-violet-500/30 transition-all duration-200 group-hover/avatar:ring-violet-400/60 group-hover/avatar:scale-105">
+                  {myProfileData?.username?.charAt(0).toUpperCase() || 'U'}
+                </div>
+                {/* Online dot */}
+                <span className="absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full bg-emerald-500 ring-2 ring-slate-900 shadow-md shadow-emerald-900" />
+              </div>
+              <div className="min-w-0 text-left">
+                <p className="truncate text-sm font-bold text-slate-100 leading-tight">{myProfileData?.username || 'User'}</p>
+                <p className="truncate text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                  {myProfileData?.status_bio || 'Online'}
+                </p>
+              </div>
             </button>
-            <div className="overflow-hidden">
-              <h2 className="text-sm font-bold text-slate-100 truncate">{myProfileData?.username || 'User'}</h2>
-              <p className="text-[10px] text-slate-400 truncate">{myProfileData?.status_bio || 'Online'}</p>
+
+            {/* Action Icons */}
+            <div className="flex items-center gap-1 shrink-0">
+              {role === 'guest' && (
+                <button
+                  onClick={() => { closeAllModals(); setShowAddFriendModal(true); }}
+                  className="flex h-8 w-8 items-center justify-center rounded-xl border border-violet-500/20 bg-violet-500/10 text-violet-400 hover:bg-violet-500/25 hover:text-violet-300 hover:border-violet-400/40 transition-all duration-200"
+                  title="Tambah Teman Baru"
+                >
+                  <UserPlus className="h-4 w-4" />
+                </button>
+              )}
+              <button
+                onClick={() => { closeAllModals(); setShowCreateGroupModal(true); }}
+                className="flex h-8 w-8 items-center justify-center rounded-xl border border-indigo-500/20 bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/25 hover:text-indigo-300 hover:border-indigo-400/40 transition-all duration-200"
+                title="Buat Grup Baru"
+              >
+                <Users className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => { closeAllModals(); setShowSettingsModal(true); }}
+                className="flex h-8 w-8 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-800 hover:text-slate-200 transition-all duration-200"
+                title="Pengaturan"
+              >
+                <Settings className="h-4 w-4" />
+              </button>
+              {/* Close button — mobile only */}
+              <button
+                onClick={() => setIsSidebarOpen(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-800 hover:text-slate-200 transition-all duration-200 md:hidden"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
           </div>
 
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => {
-                closeAllModals();
-                setShowCreateGroupModal(true);
-              }}
-              className="rounded-xl border border-indigo-500/20 bg-indigo-500/10 p-2 text-indigo-400 hover:bg-indigo-500/20 transition-all"
-              title="Buat Grup Baru"
-            >
-              <Users className="h-4 w-4" />
-            </button>
-
-            {role === 'guest' && (
-              <button
-                onClick={() => {
-                  closeAllModals();
-                  setShowAddFriendModal(true);
-                }}
-                className="rounded-xl border border-violet-500/20 bg-violet-500/10 p-2 text-violet-400 hover:bg-violet-500/20 transition-all"
-                title="Tambah Teman Baru"
-              >
-                <UserPlus className="h-4 w-4" />
-              </button>
-            )}
-
-            <button
-              onClick={() => {
-                closeAllModals();
-                setShowSettingsModal(true);
-              }}
-              className="rounded-xl p-2 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
-              title="Pengaturan Profil"
-            >
-              <Settings className="h-4 w-4" />
-            </button>
-
-            <button
-              onClick={() => setIsSidebarOpen(false)}
-              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white md:hidden"
-            >
-              <X className="h-5 w-5" />
-            </button>
+          {/* Role badge */}
+          <div className="mt-3 flex items-center gap-2">
+            <span className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider ${
+              role === 'admin'
+                ? 'bg-amber-500/15 text-amber-300 border border-amber-500/25'
+                : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+            }`}>
+              {role === 'admin' ? <Shield className="h-2.5 w-2.5" /> : <Check className="h-2.5 w-2.5" />}
+              {role === 'admin' ? 'Administrator' : 'Tamu Terverifikasi'}
+            </span>
           </div>
         </div>
 
-        {/* Admin User Management Button (Only for Admin) */}
+        {/* ── Admin Management Button ── */}
         {role === 'admin' && (
-          <div className="p-3 border-b border-white/5">
+          <div className="shrink-0 border-b border-white/[0.06] p-3">
             <button
               onClick={openUserManagement}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-violet-500/20 bg-violet-500/10 py-2.5 text-xs font-bold uppercase tracking-wider text-violet-400 hover:bg-violet-500/20 transition-all duration-200"
+              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-violet-500/25 bg-gradient-to-r from-violet-600/15 to-indigo-600/10 py-2.5 text-xs font-bold uppercase tracking-wider text-violet-300 hover:from-violet-600/25 hover:to-indigo-600/20 hover:border-violet-400/40 transition-all duration-200 shadow-sm"
             >
-              <Shield className="h-4 w-4" />
-              Kelola User & Detail Password
+              <Shield className="h-3.5 w-3.5" />
+              Kelola User & Password
             </button>
           </div>
         )}
 
-        {/* Conversations & Groups List */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-4">
-          
-          {/* Groups Section */}
+        {/* ── Chat List (scrollable) ── */}
+        <div className="flex-1 overflow-y-auto overflow-x-hidden py-3 px-3 space-y-5
+          scrollbar-thin scrollbar-track-transparent scrollbar-thumb-slate-700/60 hover:scrollbar-thumb-slate-600/80
+        ">
+
+          {/* ━━ Groups Section ━━ */}
           <div>
-            <div className="flex items-center justify-between px-2 mb-2">
-              <h3 className="text-[10px] font-bold uppercase tracking-wider text-indigo-400">
-                {role === 'admin' ? '👑 Semua Grup Sistem' : 'Grup Obrolan Saya'}
-              </h3>
+            {/* Section header */}
+            <div className="mb-2.5 flex items-center justify-between px-1">
+              <div className="flex items-center gap-2">
+                <span className="h-4 w-0.5 rounded-full bg-indigo-500"></span>
+                <h3 className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-400">
+                  {role === 'admin' ? '👑 Semua Grup' : 'Grup Obrolan'}
+                </h3>
+                {groups.length > 0 && (
+                  <span className="rounded-md bg-indigo-500/15 px-1.5 py-0.5 text-[9px] font-bold text-indigo-400">
+                    {groups.length}
+                  </span>
+                )}
+              </div>
               <button
-                onClick={() => setShowCreateGroupModal(true)}
-                className="text-[10px] font-semibold text-indigo-400 hover:underline flex items-center gap-0.5"
+                onClick={() => { closeAllModals(); setShowCreateGroupModal(true); }}
+                className="flex items-center gap-1 rounded-lg bg-indigo-500/10 border border-indigo-500/20 px-2 py-1 text-[10px] font-bold text-indigo-400 hover:bg-indigo-500/20 hover:text-indigo-300 transition-all duration-200"
               >
-                <PlusCircle className="h-3 w-3" /> Buat
+                <PlusCircle className="h-3 w-3" />
+                Buat
               </button>
             </div>
 
+            {/* Group items */}
             {groups.length === 0 ? (
-              <p className="px-2 text-[11px] text-slate-600 italic">Belum ada grup obrolan.</p>
+              <div className="mx-1 flex flex-col items-center rounded-2xl border border-dashed border-slate-700/40 py-5 text-center">
+                <Users className="mb-1.5 h-7 w-7 text-slate-700" />
+                <p className="text-[10px] text-slate-600">Belum ada grup obrolan.</p>
+                <button
+                  onClick={() => { closeAllModals(); setShowCreateGroupModal(true); }}
+                  className="mt-2 rounded-lg border border-indigo-500/25 bg-indigo-500/10 px-3 py-1 text-[10px] font-bold text-indigo-400 hover:bg-indigo-500/20 transition-all"
+                >
+                  Buat Grup Pertama
+                </button>
+              </div>
             ) : (
-              groups.map((grp) => {
-                const isSelected = selectedContact?.id === grp.id && selectedContact?.is_group;
-                const hasUnread = unreadContacts[grp.id];
+              <div className="space-y-1">
+                {groups.map((grp) => {
+                  const isSelected = selectedContact?.id === grp.id && selectedContact?.is_group;
+                  const hasUnread = unreadContacts[grp.id];
 
-                return (
-                  <button
-                    key={grp.id}
-                    onClick={() => handleSelectContact({ ...grp, is_group: true, username: grp.name })}
-                    className={`group/item relative flex w-full items-center gap-3 rounded-xl p-3 text-left transition-all duration-200 mb-1 ${
-                      isSelected
-                        ? 'bg-gradient-to-r from-indigo-600/30 to-violet-600/20 border border-indigo-500/30 text-white shadow-md'
-                        : 'bg-slate-900/40 border border-transparent hover:bg-slate-800/50 text-slate-300 hover:text-slate-100'
-                    }`}
-                  >
-                    <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 font-bold text-white shadow-md">
-                      <Users className="h-5 w-5" />
-                      {hasUnread && (
-                        <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-3 w-3 bg-indigo-500"></span>
-                        </span>
-                      )}
-                    </div>
-                    <div className="overflow-hidden flex-1 min-w-0">
-                      <p className="truncate text-sm font-bold flex items-center gap-1.5">
-                        {grp.name}
-                        {role === 'admin' && (
-                          <span className="rounded bg-amber-500/20 px-1 py-0.2 text-[8px] font-bold text-amber-300 uppercase">Master</span>
+                  return (
+                    <button
+                      key={grp.id}
+                      onClick={() => handleSelectContact({ ...grp, is_group: true, username: grp.name })}
+                      className={`group/item relative flex w-full items-center gap-3 rounded-2xl p-3 text-left transition-all duration-200 ${
+                        isSelected
+                          ? 'bg-gradient-to-r from-indigo-600/25 to-violet-600/15 border border-indigo-500/30 text-white shadow-lg shadow-indigo-900/20'
+                          : 'border border-transparent hover:bg-slate-800/60 hover:border-white/[0.06] text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      {/* Group avatar */}
+                      <div className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl font-bold text-white shadow-md transition-all duration-200 ${
+                        isSelected
+                          ? 'bg-gradient-to-tr from-indigo-600 to-violet-500 shadow-indigo-900/50'
+                          : 'bg-gradient-to-tr from-indigo-700/80 to-violet-600/80 group-hover/item:from-indigo-600 group-hover/item:to-violet-500'
+                      }`}>
+                        <Users className="h-5 w-5" />
+                        {hasUnread && (
+                          <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                            <span className="relative inline-flex h-3.5 w-3.5 rounded-full bg-indigo-500 border border-slate-900"></span>
+                          </span>
                         )}
-                      </p>
-                      <p className="truncate text-[10px] text-slate-500">{grp.description || 'Grup Obrolan'}</p>
-                    </div>
-                  </button>
-                );
-              })
+                      </div>
+
+                      {/* Group info */}
+                      <div className="min-w-0 flex-1 overflow-hidden">
+                        <div className="flex items-center gap-1.5">
+                          <p className="truncate text-sm font-bold leading-tight">{grp.name}</p>
+                          {role === 'admin' && (
+                            <span className="shrink-0 rounded bg-amber-500/20 px-1.5 py-0.5 text-[8px] font-extrabold text-amber-300 uppercase tracking-wide">SYS</span>
+                          )}
+                        </div>
+                        <p className="mt-0.5 truncate text-[10px] text-slate-500 group-hover/item:text-slate-400 transition-colors">
+                          {grp.description || 'Grup Obrolan'}
+                        </p>
+                      </div>
+
+                      {/* Selected indicator */}
+                      {isSelected && (
+                        <span className="shrink-0 h-2 w-2 rounded-full bg-indigo-400"></span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             )}
           </div>
 
-          {/* Direct Contacts Section */}
+          {/* ━━ Direct Messages Section ━━ */}
           <div>
-            <div className="flex items-center justify-between px-2 mb-2">
-              <h3 className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Pesan Pribadi</h3>
+            {/* Section header */}
+            <div className="mb-2.5 flex items-center justify-between px-1">
+              <div className="flex items-center gap-2">
+                <span className="h-4 w-0.5 rounded-full bg-violet-500"></span>
+                <h3 className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">Pesan Pribadi</h3>
+                {contacts.length > 0 && (
+                  <span className="rounded-md bg-slate-700/50 px-1.5 py-0.5 text-[9px] font-bold text-slate-400">
+                    {contacts.length}
+                  </span>
+                )}
+              </div>
               {role === 'guest' && (
                 <button
                   onClick={handleOpenAddFriendModal}
-                  className="text-[10px] font-semibold text-violet-400 hover:underline flex items-center gap-1"
+                  className="flex items-center gap-1 rounded-lg bg-violet-500/10 border border-violet-500/20 px-2 py-1 text-[10px] font-bold text-violet-400 hover:bg-violet-500/20 hover:text-violet-300 transition-all duration-200"
                 >
-                  <UserPlus className="h-3 w-3" /> Tambah
+                  <UserPlus className="h-3 w-3" />
+                  Tambah
                 </button>
               )}
             </div>
 
+            {/* Contact items */}
             {contacts.length === 0 ? (
-              <div className="flex flex-col items-center justify-center p-6 text-center text-slate-600 space-y-2">
-                <p className="text-xs">Belum ada kontak terdaftar.</p>
+              <div className="mx-1 flex flex-col items-center rounded-2xl border border-dashed border-slate-700/40 py-5 text-center">
+                <UserPlus className="mb-1.5 h-7 w-7 text-slate-700" />
+                <p className="text-[10px] text-slate-600">Belum ada kontak.</p>
+                {role === 'guest' && (
+                  <button
+                    onClick={handleOpenAddFriendModal}
+                    className="mt-2 rounded-lg border border-violet-500/25 bg-violet-500/10 px-3 py-1 text-[10px] font-bold text-violet-400 hover:bg-violet-500/20 transition-all"
+                  >
+                    Tambah Teman
+                  </button>
+                )}
               </div>
             ) : (
-              contacts.map((contact) => {
-                const isSelected = selectedContact?.id === contact.id && !selectedContact?.is_group;
-                const hasUnread = unreadContacts[contact.id];
-                const isContactTyping = typingUsers[contact.id];
-                const isContactOnline = presenceMap[contact.id]?.online;
+              <div className="space-y-1">
+                {contacts.map((contact) => {
+                  const isSelected = selectedContact?.id === contact.id && !selectedContact?.is_group;
+                  const hasUnread = unreadContacts[contact.id];
+                  const isContactTyping = typingUsers[contact.id];
+                  const isContactOnline = presenceMap[contact.id]?.online;
+                  const initials = contact.username.charAt(0).toUpperCase();
 
-                return (
-                  <button
-                    key={contact.id}
-                    onClick={() => handleSelectContact(contact)}
-                    className={`group/contact relative flex w-full items-center gap-3 rounded-xl p-3 text-left transition-all duration-200 mb-1 ${
-                      isSelected
-                        ? 'bg-gradient-to-r from-violet-600/30 to-indigo-600/20 border border-violet-500/20 text-white shadow-md'
-                        : 'bg-slate-900/30 border border-transparent hover:bg-slate-800/50 text-slate-300 hover:text-slate-100'
-                    }`}
-                  >
-                    <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-slate-800 to-slate-700 font-bold text-violet-400">
-                      {contact.username.charAt(0).toUpperCase()}
-                      {isContactOnline && (
-                        <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-slate-900" />
-                      )}
-                      {hasUnread && (
-                        <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-3 w-3 bg-violet-500"></span>
-                        </span>
-                      )}
-                    </div>
-                    <div className="overflow-hidden flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-1">
-                        <p className="truncate text-sm font-semibold flex items-center gap-1.5">
-                          {contact.username}
-                          {contact.role === 'admin' && (
-                            <span className="rounded bg-violet-500/20 px-1.5 py-0.2 text-[9px] font-bold text-violet-300 uppercase">Admin</span>
-                          )}
+                  return (
+                    <button
+                      key={contact.id}
+                      onClick={() => handleSelectContact(contact)}
+                      className={`group/contact relative flex w-full items-center gap-3 rounded-2xl p-3 text-left transition-all duration-200 ${
+                        isSelected
+                          ? 'bg-gradient-to-r from-violet-600/25 to-indigo-600/15 border border-violet-500/30 text-white shadow-lg shadow-violet-900/20'
+                          : 'border border-transparent hover:bg-slate-800/60 hover:border-white/[0.06] text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      {/* Avatar */}
+                      <div className={`relative flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-sm font-extrabold transition-all duration-200 ${
+                        isSelected
+                          ? 'bg-gradient-to-tr from-violet-600 to-indigo-500 text-white shadow-md shadow-violet-900/50'
+                          : 'bg-gradient-to-tr from-slate-700 to-slate-600 text-violet-400 group-hover/contact:from-violet-700/60 group-hover/contact:to-indigo-600/60 group-hover/contact:text-white'
+                      }`}>
+                        {initials}
+                        {/* Online status dot */}
+                        {isContactOnline ? (
+                          <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-emerald-500 ring-2 ring-slate-900 shadow-sm shadow-emerald-900" />
+                        ) : (
+                          <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-slate-600 ring-2 ring-slate-900" />
+                        )}
+                        {/* Unread badge */}
+                        {hasUnread && (
+                          <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span>
+                            <span className="relative inline-flex h-3.5 w-3.5 rounded-full bg-violet-500 border border-slate-900"></span>
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Info */}
+                      <div className="min-w-0 flex-1 overflow-hidden">
+                        <div className="flex items-center justify-between gap-1">
+                          <p className="truncate text-sm font-bold leading-tight flex items-center gap-1.5">
+                            {contact.username}
+                            {contact.role === 'admin' && (
+                              <span className="shrink-0 rounded bg-violet-500/20 px-1.5 py-0.5 text-[8px] font-extrabold text-violet-300 uppercase tracking-wide border border-violet-500/20">ADM</span>
+                            )}
+                            {contact.is_pinned && (
+                              <Pin className="shrink-0 h-2.5 w-2.5 text-amber-400 fill-amber-400" />
+                            )}
+                          </p>
+                        </div>
+                        <p className={`mt-0.5 truncate text-[10px] transition-colors ${
+                          isContactTyping
+                            ? 'text-emerald-400 font-semibold animate-pulse'
+                            : isContactOnline
+                            ? 'text-emerald-500/70'
+                            : 'text-slate-500 group-hover/contact:text-slate-400'
+                        }`}>
+                          {isContactTyping
+                            ? '✏️ sedang mengetik...'
+                            : isContactOnline
+                            ? '● Online'
+                            : contact.status_bio || 'Offline'}
                         </p>
                       </div>
-                      <p className={`truncate text-[10px] ${isContactTyping ? 'text-emerald-400 font-medium animate-pulse' : 'text-slate-500'}`}>
-                        {isContactTyping ? 'sedang mengetik...' : (isContactOnline ? 'Online' : (contact.status_bio || 'User'))}
-                      </p>
-                    </div>
-                  </button>
-                );
-              })
+
+                      {/* Selected indicator */}
+                      {isSelected && (
+                        <span className="shrink-0 h-2 w-2 rounded-full bg-violet-400"></span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             )}
+          </div>
+        </div>
+
+        {/* ── Sidebar Footer ── */}
+        <div className="shrink-0 border-t border-white/[0.06] bg-slate-900/80 backdrop-blur-md px-4 py-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className={`h-2 w-2 rounded-full ${
+                realtimeStatus.messages === 'online' && realtimeStatus.presence === 'online'
+                  ? 'bg-emerald-500 animate-pulse'
+                  : 'bg-amber-400 animate-pulse'
+              }`}></span>
+              <span className="text-[10px] font-medium text-slate-500">
+                {realtimeStatus.messages === 'online' ? 'Terhubung' : 'Menyambung...'}
+              </span>
+            </div>
+            <button
+              onClick={onLogout}
+              className="flex items-center gap-1.5 rounded-xl border border-rose-500/20 bg-rose-500/10 px-3 py-1.5 text-[10px] font-bold text-rose-400 hover:bg-rose-500/20 hover:text-rose-300 transition-all duration-200"
+              title="Keluar dari Akun"
+            >
+              <LogOut className="h-3 w-3" />
+              Keluar
+            </button>
           </div>
         </div>
       </div>
