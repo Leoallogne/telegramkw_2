@@ -8,7 +8,7 @@ import MessageInput from './MessageInput';
 import { useCallState } from '@/hooks/useCallState';
 import { useNotification } from '@/hooks/useNotification';
 import { useWebRTC } from '@/hooks/useWebRTC';
-import { LogOut, MessageSquare, Menu, X, Shield, RefreshCw, Users, Trash2, AlertTriangle, WifiOff, KeyRound, Check, Search, Pin, Download, UserPlus, Settings, Phone, Video, Mic, MicOff, VideoOff, PhoneOff, PhoneCall, Flame, MapPin, Folder, Eye, PlusCircle, UserCheck, Image as ImageIcon, FileText } from 'lucide-react';
+import { LogOut, MessageSquare, Menu, X, Shield, RefreshCw, Users, Trash2, AlertTriangle, WifiOff, KeyRound, Check, Search, Pin, Download, UserPlus, Settings, Phone, Video, Mic, MicOff, VideoOff, PhoneOff, PhoneCall, Flame, MapPin, Folder, Eye, PlusCircle, UserCheck, Image as ImageIcon, FileText, ArrowLeft } from 'lucide-react';
 
 export default function ChatWindow({ currentUser, onLogout }) {
   // ========================
@@ -1820,8 +1820,8 @@ export default function ChatWindow({ currentUser, onLogout }) {
         </div>
       )}
 
-      {/* Sidebar Backdrop Overlay for Mobile */}
-      {isSidebarOpen && (
+      {/* Sidebar Backdrop Overlay for Mobile Drawer (when active chat open and drawer pulled) */}
+      {isSidebarOpen && selectedContact && (
         <div
           onClick={() => setIsSidebarOpen(false)}
           className="fixed inset-0 z-10 bg-black/70 backdrop-blur-md transition-all duration-300 md:hidden"
@@ -1830,10 +1830,12 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
       {/* ═══════════════════════════════════════ SIDEBAR ═══════════════════════════════════════ */}
       <div
-        className={`fixed inset-y-0 left-0 z-20 flex flex-col bg-slate-900/95 backdrop-blur-xl border-r border-white/[0.06] transition-all duration-300 ease-in-out
-          w-[300px] sm:w-80
-          md:static md:translate-x-0 md:w-80 lg:w-[320px]
-          ${ isSidebarOpen ? 'translate-x-0 shadow-2xl shadow-black/50' : '-translate-x-full' }
+        className={`flex flex-col bg-slate-900/95 backdrop-blur-xl border-r border-white/[0.06] transition-all duration-300 ease-in-out
+          ${selectedContact 
+            ? (isSidebarOpen ? 'fixed inset-y-0 left-0 z-20 w-[85vw] max-w-sm shadow-2xl shadow-black/80 flex' : 'hidden md:flex')
+            : 'w-full flex'
+          }
+          md:static md:translate-x-0 md:w-80 lg:w-[330px] shrink-0 h-full
         `}
       >
         {/* ── Sidebar Header ── */}
@@ -2148,7 +2150,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
                   : 'bg-amber-400 animate-pulse'
               }`}></span>
               <span className="text-[10px] font-medium text-slate-500">
-                {realtimeStatus.messages === 'online' ? 'Terhubung' : 'Menyambung...'}
+            {realtimeStatus.messages === 'online' ? 'Terhubung' : 'Menyambung...'}
               </span>
             </div>
             <button
@@ -2163,10 +2165,11 @@ export default function ChatWindow({ currentUser, onLogout }) {
         </div>
       </div>
 
-      {/* Main Chat Area */}
-      <div className="flex h-full flex-1 flex-col bg-slate-950 relative overflow-hidden">
-        
-        {/* Offline Banner Notification */}
+      {/* 💬 ACTIVE CHAT MAIN PANE 💬 */}
+      <div className={`flex-1 flex-col overflow-hidden bg-slate-950 relative h-full ${
+        selectedContact ? 'flex w-full' : 'hidden md:flex'
+      }`}>
+        {/* Offline notification banner */}
         {isOffline && (
           <div className="sticky top-0 z-30 flex items-center justify-center gap-2 bg-rose-500/25 border-b border-rose-500/30 px-4 py-2 text-xs font-semibold text-rose-300 backdrop-blur-md animate-fade-in">
             <WifiOff className="h-4 w-4 animate-bounce" />
@@ -2175,14 +2178,27 @@ export default function ChatWindow({ currentUser, onLogout }) {
         )}
 
         {/* Chat Window Top Bar */}
-        <header className="flex h-16 shrink-0 items-center justify-between border-b border-white/5 bg-slate-900/40 px-4 md:px-6 backdrop-blur-md">
-          <div className="flex items-center gap-3 flex-1 min-w-0">
-            <button
-              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="mr-1 rounded-lg p-1.5 text-slate-400 hover:bg-slate-800 hover:text-white md:hidden"
-            >
-              <Menu className="h-5 w-5" />
-            </button>
+        <header className="relative flex h-16 shrink-0 items-center justify-between border-b border-white/5 bg-slate-900/40 px-3 sm:px-4 md:px-6 backdrop-blur-md">
+          <div className="flex items-center gap-2.5 sm:gap-3 flex-1 min-w-0">
+            {selectedContact ? (
+              <button
+                type="button"
+                onClick={() => setSelectedContact(null)}
+                className="rounded-xl p-2 text-slate-400 hover:bg-slate-800 hover:text-white transition-all md:hidden"
+                title="Kembali ke daftar percakapan"
+              >
+                <ArrowLeft className="h-5 w-5" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                className="rounded-xl p-2 text-slate-400 hover:bg-slate-800 hover:text-white transition-all md:hidden"
+                title="Buka menu"
+              >
+                <Menu className="h-5 w-5" />
+              </button>
+            )}
 
             <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-500 font-bold text-white shadow-md">
               {selectedContact ? (selectedContact.is_group ? <Users className="h-5 w-5" /> : selectedContact.username.charAt(0).toUpperCase()) : 'C'}
@@ -2217,8 +2233,8 @@ export default function ChatWindow({ currentUser, onLogout }) {
           </div>
 
           {/* Header Action Buttons (Media Vault, Calls, Search, Logout) */}
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="hidden items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 text-[10px] font-bold text-emerald-300 md:flex">
+          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+            <div className="hidden items-center gap-2 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1.5 text-[10px] font-bold text-emerald-300 lg:flex">
               <span className={`h-2 w-2 rounded-full ${realtimeStatus.messages === 'online' && realtimeStatus.presence === 'online' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
               Realtime {realtimeStatus.messages === 'online' ? 'OK' : 'check'}
             </div>
@@ -2230,7 +2246,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
                   closeAllModals();
                   setShowVaultModal(true);
                 }}
-                className="rounded-xl border border-white/5 bg-slate-900 p-2.5 text-slate-400 hover:bg-indigo-600 hover:text-white transition-all"
+                className="rounded-xl border border-white/5 bg-slate-900 p-2 text-slate-400 hover:bg-indigo-600 hover:text-white transition-all"
                 title="Brankas Galeri Media & File Tersimpan"
               >
                 <Folder className="h-4 w-4" />
@@ -2242,7 +2258,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
                 <button
                   type="button"
                   onClick={() => startCall(false)}
-                  className="rounded-xl border border-white/5 bg-slate-900 p-2.5 text-slate-400 hover:bg-violet-600 hover:text-white transition-all"
+                  className="rounded-xl border border-white/5 bg-slate-900 p-2 text-slate-400 hover:bg-violet-600 hover:text-white transition-all"
                   title="Panggilan Suara (Voice Call)"
                 >
                   <Phone className="h-4 w-4" />
@@ -2250,7 +2266,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
                 <button
                   type="button"
                   onClick={() => startCall(true)}
-                  className="rounded-xl border border-white/5 bg-slate-900 p-2.5 text-slate-400 hover:bg-violet-600 hover:text-white transition-all"
+                  className="rounded-xl border border-white/5 bg-slate-900 p-2 text-slate-400 hover:bg-violet-600 hover:text-white transition-all"
                   title="Panggilan Video (Video Call)"
                 >
                   <Video className="h-4 w-4" />
@@ -2259,30 +2275,32 @@ export default function ChatWindow({ currentUser, onLogout }) {
             )}
 
             {showSearch ? (
-              <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-slate-950/80 px-2 py-1">
-                <Search className="h-3.5 w-3.5 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Cari pesan..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-28 sm:w-40 bg-transparent text-xs text-slate-200 outline-none"
-                  autoFocus
-                />
-                <button
-                  type="button"
-                  onClick={() => { setShowSearch(false); setSearchQuery(''); }}
-                  className="text-slate-400 hover:text-white p-0.5"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
+              <div className="absolute inset-0 z-20 flex items-center gap-2 bg-slate-900 px-3 sm:px-4 md:static md:bg-transparent md:p-0">
+                <div className="flex flex-1 items-center gap-2 rounded-xl border border-white/10 bg-slate-950/90 px-3 py-1.5 md:flex-initial">
+                  <Search className="h-3.5 w-3.5 text-violet-400 shrink-0" />
+                  <input
+                    type="text"
+                    placeholder="Cari pesan..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full sm:w-44 bg-transparent text-xs text-slate-200 outline-none"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => { setShowSearch(false); setSearchQuery(''); }}
+                    className="rounded-md p-0.5 text-slate-400 hover:text-white"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               </div>
             ) : (
               <button
                 type="button"
                 onClick={() => setShowSearch(true)}
-                className="rounded-xl border border-white/5 bg-slate-900 p-2.5 text-slate-400 hover:text-white transition-colors"
-                title="Cari Pesan"
+                className="rounded-xl border border-white/5 bg-slate-900 p-2 text-slate-400 hover:bg-slate-800 hover:text-white transition-all"
+                title="Cari riwayat pesan"
               >
                 <Search className="h-4 w-4" />
               </button>
@@ -2441,8 +2459,8 @@ export default function ChatWindow({ currentUser, onLogout }) {
       {/* Group Creation Modal */}
       {showCreateGroupModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl overflow-hidden animate-zoom-in">
-            <div className="flex items-center justify-between border-b border-white/5 px-6 py-4">
+          <div className="relative w-full max-w-md max-h-[90dvh] flex flex-col rounded-2xl sm:rounded-3xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl overflow-hidden animate-zoom-in">
+            <div className="flex items-center justify-between border-b border-white/5 px-6 py-4 shrink-0">
               <div className="flex items-center gap-2.5">
                 <Users className="h-5 w-5 text-indigo-400" />
                 <h3 className="text-sm font-bold text-slate-100">Buat Grup Obrolan Baru</h3>
@@ -2455,7 +2473,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
               </button>
             </div>
 
-            <form onSubmit={handleCreateGroupSubmit} className="p-6 space-y-4">
+            <form onSubmit={handleCreateGroupSubmit} className="p-6 space-y-4 overflow-y-auto">
               <div className="space-y-1">
                 <label className="text-xs font-semibold text-slate-400">Nama Grup</label>
                 <input
@@ -2545,7 +2563,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
             </div>
 
             {/* Vault Tabs Header */}
-            <div className="flex border-b border-white/5 bg-slate-950/40 px-6 shrink-0 text-xs font-bold">
+            <div className="flex border-b border-white/5 bg-slate-950/40 px-4 sm:px-6 shrink-0 text-xs font-bold overflow-x-auto scrollbar-none">
               <button
                 onClick={() => setVaultTab('images')}
                 className={`flex items-center gap-1.5 py-3 px-3 border-b-2 transition-colors ${
@@ -2753,8 +2771,8 @@ export default function ChatWindow({ currentUser, onLogout }) {
       {/* Add Friend Search Modal */}
       {showAddFriendModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="relative w-full max-w-md flex flex-col rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl overflow-hidden animate-zoom-in">
-            <div className="flex items-center justify-between border-b border-white/5 px-5 py-4">
+          <div className="relative w-full max-w-md max-h-[90dvh] flex flex-col rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl overflow-hidden animate-zoom-in">
+            <div className="flex items-center justify-between border-b border-white/5 px-5 py-4 shrink-0">
               <div className="flex items-center gap-2.5">
                 <UserPlus className="h-5 w-5 text-violet-400" />
                 <h3 className="text-sm font-bold text-slate-100">Tambah Teman Baru</h3>
@@ -2767,7 +2785,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
               </button>
             </div>
 
-            <div className="p-4 space-y-4">
+            <div className="p-4 space-y-4 overflow-y-auto">
               <div className="relative">
                 <Search className="absolute left-3 top-3 h-4 w-4 text-slate-500" />
                 <input
@@ -2833,8 +2851,8 @@ export default function ChatWindow({ currentUser, onLogout }) {
       {/* User Profile & Settings Modal */}
       {showSettingsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="relative w-full max-w-md rounded-2xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl overflow-hidden animate-zoom-in">
-            <div className="flex items-center justify-between border-b border-white/5 px-6 py-4">
+          <div className="relative w-full max-w-md max-h-[90dvh] flex flex-col rounded-2xl sm:rounded-3xl border border-white/10 bg-slate-900/95 shadow-2xl backdrop-blur-xl overflow-hidden animate-zoom-in">
+            <div className="flex items-center justify-between border-b border-white/5 px-6 py-4 shrink-0">
               <div className="flex items-center gap-2.5">
                 <Settings className="h-5 w-5 text-violet-400" />
                 <h3 className="text-sm font-bold text-slate-100">Pengaturan Profil & Privasi</h3>
@@ -2847,7 +2865,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
               </button>
             </div>
 
-            <form onSubmit={handleSaveProfileSettings} className="p-6 space-y-4">
+            <form onSubmit={handleSaveProfileSettings} className="p-5 sm:p-6 space-y-4 overflow-y-auto">
               {settingsSuccess && (
                 <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-3 text-xs text-emerald-300">
                   <Check className="h-4 w-4 shrink-0" />

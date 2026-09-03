@@ -108,7 +108,7 @@ export default function Home() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950">
+    <main className="h-[100dvh] w-full overflow-hidden bg-slate-950">
       {user ? (
         <ChatWindow currentUser={user} onLogout={handleLogout} />
       ) : (

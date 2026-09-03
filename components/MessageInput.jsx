@@ -21,7 +21,8 @@ const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 const POPULAR_EMOJIS = [
   '👍', '❤️', '😂', '😮', '😢', '🔥', 
   '🎉', '🙏', '😊', '😍', '👏', '✨', 
-  '💯', '🚀', '😎', '🙌', '🤝', '💡'
+  '💯', '🚀', '😎', '🙌', '🤝', '💡',
+  '🥳', '🤔', '👀', '💪', '⭐', '😴'
 ];
 
 const TIMER_OPTIONS = [
@@ -433,26 +434,38 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
         </div>
       )}
 
+      {/* Click-outside backdrop for active popovers */}
+      {(showQuickActions || showEmojiPicker || showTimerPicker) && (
+        <div
+          className="fixed inset-0 z-30"
+          onClick={() => {
+            setShowQuickActions(false);
+            setShowEmojiPicker(false);
+            setShowTimerPicker(false);
+          }}
+        />
+      )}
+
       {/* Inline Emoji Picker Popover */}
       {showEmojiPicker && (
-        <div className="absolute bottom-full left-4 mb-2 z-40 w-64 rounded-2xl border border-white/10 bg-slate-900/95 p-3 shadow-2xl backdrop-blur-xl animate-zoom-in">
+        <div className="absolute bottom-full left-2 sm:left-4 mb-2 z-40 w-[calc(100vw-1.5rem)] sm:w-80 max-w-sm rounded-2xl border border-white/10 bg-slate-900/95 p-3 shadow-2xl backdrop-blur-xl animate-zoom-in">
           <div className="flex items-center justify-between border-b border-white/5 pb-2 mb-2">
             <span className="text-xs font-bold text-slate-300">Pilih Emoji</span>
             <button
               type="button"
               onClick={() => setShowEmojiPicker(false)}
-              className="text-slate-500 hover:text-white"
+              className="rounded-lg p-1 text-slate-500 hover:text-white hover:bg-white/10"
             >
-              <X className="h-3.5 w-3.5" />
+              <X className="h-4 w-4" />
             </button>
           </div>
-          <div className="grid grid-cols-6 gap-2">
+          <div className="grid grid-cols-6 sm:grid-cols-8 gap-2 max-h-48 overflow-y-auto pr-1">
             {POPULAR_EMOJIS.map((emoji) => (
               <button
                 key={emoji}
                 type="button"
                 onClick={() => insertEmoji(emoji)}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-lg hover:bg-white/10 hover:scale-125 transition-all"
+                className="flex h-9 w-9 items-center justify-center rounded-xl text-xl hover:bg-white/10 active:scale-110 transition-all"
               >
                 {emoji}
               </button>
@@ -463,7 +476,7 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
 
       {/* Timer Options Popover */}
       {showTimerPicker && (
-        <div className="absolute bottom-full left-16 mb-2 z-40 w-52 rounded-2xl border border-white/10 bg-slate-900/95 p-3 shadow-2xl backdrop-blur-xl animate-zoom-in">
+        <div className="absolute bottom-full left-2 sm:left-14 mb-2 z-40 w-[calc(100vw-2rem)] sm:w-56 max-w-xs rounded-2xl border border-white/10 bg-slate-900/95 p-3 shadow-2xl backdrop-blur-xl animate-zoom-in">
           <div className="flex items-center justify-between border-b border-white/5 pb-2 mb-2">
             <span className="text-xs font-bold text-amber-300 flex items-center gap-1">
               <Flame className="h-3.5 w-3.5" /> Timer Pesan Rahasia
@@ -471,9 +484,9 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
             <button
               type="button"
               onClick={() => setShowTimerPicker(false)}
-              className="text-slate-500 hover:text-white"
+              className="rounded-lg p-1 text-slate-500 hover:text-white hover:bg-white/10"
             >
-              <X className="h-3.5 w-3.5" />
+              <X className="h-4 w-4" />
             </button>
           </div>
           <div className="space-y-1">
@@ -485,7 +498,7 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
                   setSelectedTimer(opt.value);
                   setShowTimerPicker(false);
                 }}
-                className={`w-full text-left px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                className={`w-full text-left px-3 py-2 rounded-xl text-xs font-semibold transition-colors ${
                   selectedTimer === opt.value
                     ? 'bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30'
                     : 'text-slate-300 hover:bg-white/5'
@@ -597,7 +610,7 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
         </div>
       ) : (
         /* Standard Composer Input */
-        <form onSubmit={handleSubmit} className="flex items-center gap-2 p-4">
+        <form onSubmit={handleSubmit} className="flex items-center gap-2 p-3 sm:p-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <input
             ref={fileInputRef}
             type="file"
@@ -624,14 +637,14 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
                   setShowTimerPicker(false);
                 }}
                 disabled={disabled || isSending || isUploading}
-                className="flex h-11 w-11 items-center justify-center rounded-xl border border-violet-500/30 bg-gradient-to-br from-violet-600/25 to-indigo-600/25 text-violet-300 shadow-md shadow-violet-900/30 transition-all duration-200 hover:bg-violet-600/20 hover:text-white disabled:opacity-50"
+                className="flex h-11 w-11 items-center justify-center rounded-xl border border-violet-500/30 bg-gradient-to-br from-violet-600/25 to-indigo-600/25 text-violet-300 shadow-md shadow-violet-900/30 transition-all duration-200 hover:bg-violet-600/20 hover:text-white disabled:opacity-50 active:scale-95"
                 title="Menu fitur"
               >
                 <MoreHorizontal className="h-5 w-5" />
               </button>
 
               {showQuickActions && (
-                <div className="absolute bottom-14 left-0 z-40 w-64 rounded-2xl border border-white/10 bg-slate-900/95 p-2.5 shadow-2xl backdrop-blur-xl animate-zoom-in">
+                <div className="absolute bottom-14 left-2 sm:left-0 z-40 w-[calc(100vw-2rem)] sm:w-64 max-w-xs rounded-2xl border border-white/10 bg-slate-900/95 p-2.5 shadow-2xl backdrop-blur-xl animate-zoom-in">
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
@@ -707,7 +720,7 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
               placeholder={selectedFile ? 'Tambah keterangan (opsional)...' : (selectedTimer ? `Pesan rahasia (${selectedTimer}s)...` : 'Tulis pesan...')}
               disabled={disabled || isSending || isUploading}
               maxLength={MAX_MESSAGE_LENGTH + 1}
-              className={`w-full rounded-xl border bg-slate-950/60 px-4 py-3 text-sm text-slate-200 placeholder-slate-500 outline-none transition-all duration-200 focus:ring-1 disabled:cursor-not-allowed disabled:opacity-50 ${
+              className={`w-full rounded-xl border bg-slate-950/60 px-4 py-3 text-base md:text-sm text-slate-200 placeholder-slate-500 outline-none transition-all duration-200 focus:ring-1 disabled:cursor-not-allowed disabled:opacity-50 ${
                 selectedTimer
                   ? 'border-amber-500/40 focus:border-amber-500 focus:ring-amber-500/20'
                   : isOverLimit
