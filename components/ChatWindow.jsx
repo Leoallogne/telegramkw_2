@@ -144,11 +144,18 @@ export default function ChatWindow({ currentUser, onLogout }) {
   // Reactions State: { [messageId]: [ { id, message_id, user_id, emoji, isMine: boolean } ] }
   const [reactionsMap, setReactionsMap] = useState({});
 
+  // Audio playback coordinator state
+  const [currentlyPlayingAudioId, setCurrentlyPlayingAudioId] = useState(null);
+
   // Offline status state
   const [isOffline, setIsOffline] = useState(typeof window !== 'undefined' ? !navigator.onLine : false);
 
-  // Real-time Typing Status state
+  // Real-time Typing Status state: { [userId]: boolean }
   const [typingUsers, setTypingUsers] = useState({});
+
+  // Message pagination state
+  const [hasMoreMessages, setHasMoreMessages] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   // General Chat state
   const [messages, setMessages] = useState([]);
@@ -159,6 +166,8 @@ export default function ChatWindow({ currentUser, onLogout }) {
   const messagesEndRef = useRef(null);
   const channelRef = useRef(null);
   const callChannelRef = useRef(null);
+  const searchDebounceRef = useRef(null);
+  const loadMessagesRef = useRef(null);
 
   useEffect(() => {
     selectedContactRef.current = selectedContact;
@@ -283,9 +292,14 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   }, [currentUser, selectedContact]);
 
-  // Monitor online/offline status
+  // Monitor online/offline status with auto-resync
   useEffect(() => {
-    const handleOnline = () => setIsOffline(false);
+    const handleOnline = () => {
+      setIsOffline(false);
+      if (selectedContactRef.current && loadMessagesRef.current) {
+        loadMessagesRef.current(selectedContactRef.current);
+      }
+    };
     const handleOffline = () => setIsOffline(true);
 
     if (typeof window !== 'undefined') {
@@ -312,9 +326,11 @@ export default function ChatWindow({ currentUser, onLogout }) {
           .order('created_at', { ascending: false });
 
         setContacts(guestProfiles || []);
+        const newMap = {};
         guestProfiles?.forEach((g) => {
-          setProfilesMap((prev) => ({ ...prev, [g.id]: g.username }));
+          newMap[g.id] = g.username;
         });
+        setProfilesMap((prev) => ({ ...prev, ...newMap }));
       } else {
         const { data: friendshipRows } = await supabase
           .from('friendships')
@@ -343,12 +359,14 @@ export default function ChatWindow({ currentUser, onLogout }) {
           contactList.push({ ...adminData, is_admin_contact: true });
         }
 
+        const newFriendMap = {};
         friendProfiles.forEach((f) => {
           if (!contactList.some((c) => c.id === f.id)) {
             contactList.push(f);
           }
-          setProfilesMap((prev) => ({ ...prev, [f.id]: f.username }));
+          newFriendMap[f.id] = f.username;
         });
+        setProfilesMap((prev) => ({ ...prev, ...newFriendMap }));
 
         setContacts(contactList);
       }
@@ -476,6 +494,26 @@ export default function ChatWindow({ currentUser, onLogout }) {
           'Memuat kontak dan grup terlalu lama.'
         );
 
+        // Load initial unread message flags
+        try {
+          const { data: unreadData } = await supabase
+            .from('messages')
+            .select('sender_id, group_id')
+            .eq('is_read', false)
+            .eq('receiver_id', currentUser.id);
+
+          if (unreadData && unreadData.length > 0) {
+            const unreadMap = {};
+            unreadData.forEach((row) => {
+              const key = row.group_id || row.sender_id;
+              if (key) unreadMap[key] = true;
+            });
+            setUnreadContacts((prev) => ({ ...prev, ...unreadMap }));
+          }
+        } catch (unErr) {
+          console.warn('Could not load initial unread messages:', unErr);
+        }
+
       } catch (err) {
         console.error('Initialization error:', err);
         setError('Gagal memuat konfigurasi chat. Coba muat ulang halaman.');
@@ -597,9 +635,9 @@ export default function ChatWindow({ currentUser, onLogout }) {
         }
       })
       .on('broadcast', { event: 'ice-candidate' }, async ({ payload }) => {
-        if (payload.targetId === currentUser.id && peerConnectionRef.current) {
+        if (payload.targetId === currentUser.id) {
           try {
-            if (peerConnectionRef.current.remoteDescription) {
+            if (peerConnectionRef.current && peerConnectionRef.current.remoteDescription) {
               await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(payload.candidate));
             } else {
               iceCandidatesQueueRef.current.push(payload.candidate);
@@ -873,38 +911,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  const loadMessages = async (targetObj) => {
-    if (!targetObj) return;
-    try {
-      let query;
-      if (targetObj.is_group) {
-        query = supabase
-          .from('messages')
-          .select('*')
-          .eq('group_id', targetObj.id)
-          .order('created_at', { ascending: true });
-      } else {
-        query = supabase
-          .from('messages')
-          .select('*')
-          .or(
-            `and(sender_id.eq.${currentUser.id},receiver_id.eq.${targetObj.id}),and(sender_id.eq.${targetObj.id},receiver_id.eq.${currentUser.id})`
-          )
-          .order('created_at', { ascending: true });
-      }
-
-      const { data, error: msgErr } = await query;
-      if (msgErr) throw msgErr;
-      setMessages(data || []);
-
-      if (data && data.length > 0) {
-        await loadReactions(data.map((m) => m.id));
-      }
-    } catch (err) {
-      console.error('Error loading messages:', err);
-    }
-  };
-
   const loadReactions = async (messageIds) => {
     if (!messageIds || messageIds.length === 0) return;
     try {
@@ -926,6 +932,91 @@ export default function ChatWindow({ currentUser, onLogout }) {
       setReactionsMap(map);
     } catch (err) {
       console.error('Error loading reactions:', err);
+    }
+  };
+
+  const loadMessages = async (targetObj) => {
+    if (!targetObj) return;
+    try {
+      let query;
+      if (targetObj.is_group) {
+        query = supabase
+          .from('messages')
+          .select('*')
+          .eq('group_id', targetObj.id)
+          .order('created_at', { ascending: false })
+          .limit(40);
+      } else {
+        query = supabase
+          .from('messages')
+          .select('*')
+          .or(
+            `and(sender_id.eq.${currentUser.id},receiver_id.eq.${targetObj.id}),and(sender_id.eq.${targetObj.id},receiver_id.eq.${currentUser.id})`
+          )
+          .order('created_at', { ascending: false })
+          .limit(40);
+      }
+
+      const { data, error: msgErr } = await query;
+      if (msgErr) throw msgErr;
+
+      const ordered = (data || []).reverse();
+      setMessages(ordered);
+      setHasMoreMessages((data || []).length === 40);
+
+      if (ordered.length > 0) {
+        await loadReactions(ordered.map((m) => m.id));
+      }
+    } catch (err) {
+      console.error('Error loading messages:', err);
+    }
+  };
+
+  useEffect(() => {
+    loadMessagesRef.current = loadMessages;
+  });
+
+  const handleLoadOlderMessages = async () => {
+    if (!selectedContact || loadingMore || !hasMoreMessages || messages.length === 0) return;
+    setLoadingMore(true);
+    const oldestMessage = messages[0];
+    try {
+      let query;
+      if (selectedContact.is_group) {
+        query = supabase
+          .from('messages')
+          .select('*')
+          .eq('group_id', selectedContact.id)
+          .lt('created_at', oldestMessage.created_at)
+          .order('created_at', { ascending: false })
+          .limit(30);
+      } else {
+        query = supabase
+          .from('messages')
+          .select('*')
+          .or(
+            `and(sender_id.eq.${currentUser.id},receiver_id.eq.${selectedContact.id}),and(sender_id.eq.${selectedContact.id},receiver_id.eq.${currentUser.id})`
+          )
+          .lt('created_at', oldestMessage.created_at)
+          .order('created_at', { ascending: false })
+          .limit(30);
+      }
+
+      const { data, error: moreErr } = await query;
+      if (moreErr) throw moreErr;
+
+      if (data && data.length > 0) {
+        const olderOrdered = data.reverse();
+        setMessages((prev) => [...olderOrdered, ...prev]);
+        setHasMoreMessages(data.length === 30);
+        await loadReactions(olderOrdered.map((m) => m.id));
+      } else {
+        setHasMoreMessages(false);
+      }
+    } catch (err) {
+      console.error('Error loading older messages:', err);
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -969,6 +1060,14 @@ export default function ChatWindow({ currentUser, onLogout }) {
           if (isMatch) {
             setMessages((prev) => {
               if (prev.some((m) => m.id === newMsg.id)) return prev;
+              const optIndex = prev.findIndex(
+                (m) => m.is_sending && m.sender_id === newMsg.sender_id && m.content === newMsg.content
+              );
+              if (optIndex !== -1) {
+                const nextList = [...prev];
+                nextList[optIndex] = newMsg;
+                return nextList;
+              }
               return [...prev, newMsg];
             });
 
@@ -1055,11 +1154,28 @@ export default function ChatWindow({ currentUser, onLogout }) {
         }
       )
       .on('broadcast', { event: 'typing' }, (payload) => {
-        const { userId, isTyping } = payload.payload;
-        setTypingUsers((prev) => ({
-          ...prev,
-          [userId]: isTyping,
-        }));
+        const { userId, targetId, isGroup, isTyping } = payload.payload || {};
+        if (!userId || userId === currentUser.id) return;
+        const activeTarget = selectedContactRef.current;
+        let isRelevant = false;
+        if (isGroup) {
+          isRelevant = Boolean(activeTarget?.is_group && activeTarget.id === targetId);
+        } else {
+          isRelevant = Boolean(!activeTarget?.is_group && targetId === currentUser.id && activeTarget?.id === userId);
+        }
+
+        if (isRelevant) {
+          setTypingUsers((prev) => ({
+            ...prev,
+            [userId]: isTyping,
+          }));
+        } else if (!isTyping) {
+          setTypingUsers((prev) => {
+            const nextMap = { ...prev };
+            delete nextMap[userId];
+            return nextMap;
+          });
+        }
       })
       .subscribe((status) => {
         setRealtimeStatus((prev) => ({
@@ -1095,6 +1211,23 @@ export default function ChatWindow({ currentUser, onLogout }) {
   const handleSendMessage = async (content, replyToId = null, expireSeconds = null) => {
     if (!selectedContact) return;
 
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    const optimisticMsg = {
+      id: tempId,
+      sender_id: currentUser.id,
+      receiver_id: selectedContact.is_group ? null : selectedContact.id,
+      group_id: selectedContact.is_group ? selectedContact.id : null,
+      content: content,
+      is_read: false,
+      reply_to_id: replyToId,
+      expire_seconds: expireSeconds,
+      created_at: new Date().toISOString(),
+      is_sending: true,
+    };
+
+    // Instant UI feedback (0ms perceived latency)
+    setMessages((prev) => [...prev, optimisticMsg]);
+
     try {
       const payload = {
         sender_id: currentUser.id,
@@ -1111,20 +1244,37 @@ export default function ChatWindow({ currentUser, onLogout }) {
       if (replyToId) payload.reply_to_id = replyToId;
       if (expireSeconds) payload.expire_seconds = expireSeconds;
 
-      const { error: sendErr } = await supabase.from('messages').insert(payload);
+      const { data: insertedMsg, error: sendErr } = await supabase
+        .from('messages')
+        .insert(payload)
+        .select()
+        .single();
+
       if (sendErr) throw sendErr;
+
+      if (insertedMsg) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === tempId ? insertedMsg : m))
+        );
+      }
     } catch (err) {
       console.error('Send error:', err);
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
       alert('Gagal mengirim pesan.');
     }
   };
 
   const handleTypingChange = (isTyping) => {
-    if (channelRef.current) {
+    if (channelRef.current && selectedContactRef.current) {
       channelRef.current.send({
         type: 'broadcast',
         event: 'typing',
-        payload: { userId: currentUser.id, isTyping }
+        payload: {
+          userId: currentUser.id,
+          targetId: selectedContactRef.current.id,
+          isGroup: Boolean(selectedContactRef.current.is_group),
+          isTyping
+        }
       });
     }
   };
@@ -1285,31 +1435,35 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
-  const handleSearchUsers = async (query) => {
+  const handleSearchUsers = (query) => {
     setFriendSearchQuery(query);
-    if (!query.trim()) {
-      const { data } = await supabase
-        .from('profiles')
-        .select('*')
-        .neq('id', currentUser.id)
-        .eq('role', 'guest')
-        .limit(20);
-      setSearchUsersResults(data || []);
-      return;
-    }
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
 
-    try {
-      const { data } = await supabase
-        .from('profiles')
-        .select('*')
-        .neq('id', currentUser.id)
-        .eq('role', 'guest')
-        .ilike('username', `%${query.trim()}%`);
+    searchDebounceRef.current = setTimeout(async () => {
+      if (!query.trim()) {
+        const { data } = await supabase
+          .from('profiles')
+          .select('*')
+          .neq('id', currentUser.id)
+          .eq('role', 'guest')
+          .limit(20);
+        setSearchUsersResults(data || []);
+        return;
+      }
 
-      setSearchUsersResults(data || []);
-    } catch (err) {
-      console.error('Search error:', err);
-    }
+      try {
+        const { data } = await supabase
+          .from('profiles')
+          .select('*')
+          .neq('id', currentUser.id)
+          .eq('role', 'guest')
+          .ilike('username', `%${query.trim()}%`);
+
+        setSearchUsersResults(data || []);
+      } catch (err) {
+        console.error('Search error:', err);
+      }
+    }, 300);
   };
 
   const handleAddFriend = async (targetUser) => {
@@ -2151,7 +2305,22 @@ export default function ChatWindow({ currentUser, onLogout }) {
               <Pin className="h-3.5 w-3.5 text-amber-400 fill-amber-400 shrink-0" />
               <div className="overflow-hidden">
                 <span className="font-bold text-amber-300">Pesan Tersemat:</span>
-                <p className="truncate text-slate-300 text-[11px]">{pinnedMessageInChat.content}</p>
+                <p className="truncate text-slate-300 text-[11px]">
+                  {(() => {
+                    const c = pinnedMessageInChat.content || '';
+                    if (c.includes('[image:')) return '📷 [Foto]';
+                    if (c.includes('[audio:')) return '🎵 [Pesan Suara]';
+                    if (c.includes('[file:')) {
+                      const m = c.match(/\[file:([^|]+)\|/);
+                      return `📁 [File: ${m ? m[1] : 'Dokumen'}]`;
+                    }
+                    if (c.includes('[location:')) {
+                      const m = c.match(/\[location:[^|]+\|([^\]]+)\]/);
+                      return `📍 [Lokasi: ${m ? m[1] : 'Peta'}]`;
+                    }
+                    return c;
+                  })()}
+                </p>
               </div>
             </div>
             <button
@@ -2185,6 +2354,26 @@ export default function ChatWindow({ currentUser, onLogout }) {
             </div>
           ) : (
             <>
+              {hasMoreMessages && (
+                <div className="flex justify-center py-2">
+                  <button
+                    type="button"
+                    onClick={handleLoadOlderMessages}
+                    disabled={loadingMore}
+                    className="flex items-center gap-1.5 rounded-full border border-white/10 bg-slate-900/80 px-4 py-1.5 text-xs text-violet-400 hover:bg-slate-800 transition-colors shadow-sm disabled:opacity-50"
+                  >
+                    {loadingMore ? (
+                      <>
+                        <RefreshCw className="h-3 w-3 animate-spin" />
+                        Memuat pesan sebelumnya...
+                      </>
+                    ) : (
+                      '↑ Muat pesan sebelumnya'
+                    )}
+                  </button>
+                </div>
+              )}
+
               {filteredMessages.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center text-center text-slate-600 space-y-2">
                   <p className="text-xs">
@@ -2226,6 +2415,8 @@ export default function ChatWindow({ currentUser, onLogout }) {
                       onPinMessage={handlePinMessage}
                       onImageClick={(url) => setActiveLightboxUrl(url)}
                       onSelfDestruct={handleSelfDestructMessage}
+                      currentlyPlayingAudioId={currentlyPlayingAudioId}
+                      onPlayAudio={(id) => setCurrentlyPlayingAudioId(id)}
                     />
                   );
                 })

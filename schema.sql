@@ -94,6 +94,9 @@ CREATE TABLE IF NOT EXISTS public.message_reactions (
 -- 4. Index only when needed.
 CREATE INDEX IF NOT EXISTS idx_messages_sender_receiver ON public.messages(sender_id, receiver_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON public.messages(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_group_id ON public.messages(group_id);
+CREATE INDEX IF NOT EXISTS idx_messages_unread ON public.messages(receiver_id) WHERE is_read = false;
+CREATE INDEX IF NOT EXISTS idx_group_members_user_id ON public.group_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_message_reactions_message_id ON public.message_reactions(message_id);
 CREATE INDEX IF NOT EXISTS idx_friendships_user_id ON public.friendships(user_id);
 CREATE INDEX IF NOT EXISTS idx_friendships_friend_id ON public.friendships(friend_id);
@@ -206,6 +209,9 @@ DROP POLICY IF EXISTS "Allow update own friendships" ON public.friendships;
 DROP POLICY IF EXISTS "Allow read own messages" ON public.messages;
 DROP POLICY IF EXISTS "Allow insert own messages" ON public.messages;
 DROP POLICY IF EXISTS "Allow update own received messages" ON public.messages;
+DROP POLICY IF EXISTS "Allow update own sent messages" ON public.messages;
+DROP POLICY IF EXISTS "Allow update group messages" ON public.messages;
+DROP POLICY IF EXISTS "Allow delete own messages" ON public.messages;
 
 DROP POLICY IF EXISTS "Allow read message reactions" ON public.message_reactions;
 DROP POLICY IF EXISTS "Allow insert own reactions" ON public.message_reactions;
@@ -302,18 +308,73 @@ CREATE POLICY "Allow update own friendships"
 CREATE POLICY "Allow read own messages"
     ON public.messages
     FOR SELECT
-    USING (auth.uid() = sender_id OR auth.uid() = receiver_id);
+    USING (
+      auth.uid() = sender_id 
+      OR auth.uid() = receiver_id
+      OR (
+        group_id IS NOT NULL 
+        AND EXISTS (
+          SELECT 1 FROM public.group_members 
+          WHERE group_members.group_id = public.messages.group_id 
+            AND group_members.user_id = auth.uid()
+        )
+      )
+    );
 
 CREATE POLICY "Allow insert own messages"
     ON public.messages
     FOR INSERT
-    WITH CHECK (auth.uid() = sender_id);
+    WITH CHECK (
+      auth.uid() = sender_id
+      AND (
+        group_id IS NULL
+        OR EXISTS (
+          SELECT 1 FROM public.group_members
+          WHERE group_members.group_id = public.messages.group_id
+            AND group_members.user_id = auth.uid()
+        )
+      )
+    );
 
 CREATE POLICY "Allow update own received messages"
     ON public.messages
     FOR UPDATE
     USING (auth.uid() = receiver_id)
     WITH CHECK (auth.uid() = receiver_id);
+
+CREATE POLICY "Allow update own sent messages"
+    ON public.messages
+    FOR UPDATE
+    USING (auth.uid() = sender_id)
+    WITH CHECK (auth.uid() = sender_id);
+
+CREATE POLICY "Allow update group messages"
+    ON public.messages
+    FOR UPDATE
+    USING (
+      group_id IS NOT NULL 
+      AND EXISTS (
+        SELECT 1 FROM public.group_members 
+        WHERE group_members.group_id = public.messages.group_id 
+          AND group_members.user_id = auth.uid()
+      )
+    );
+
+CREATE POLICY "Allow delete own messages"
+    ON public.messages
+    FOR DELETE
+    USING (
+      auth.uid() = sender_id 
+      OR auth.uid() = receiver_id
+      OR (
+        group_id IS NOT NULL 
+        AND EXISTS (
+          SELECT 1 FROM public.group_members 
+          WHERE group_members.group_id = public.messages.group_id 
+            AND group_members.user_id = auth.uid()
+        )
+      )
+    );
 
 CREATE POLICY "Allow read message reactions"
     ON public.message_reactions
@@ -345,6 +406,13 @@ CREATE POLICY "Allow delete own reactions"
 DO $$
 BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.message_reactions;
 EXCEPTION
   WHEN duplicate_object THEN NULL;
 END $$;
@@ -387,3 +455,19 @@ ON CONFLICT (id) DO UPDATE SET
   username = EXCLUDED.username,
   role = EXCLUDED.role,
   last_seen = timezone('utc'::text, now());
+
+-- 11. Storage Bucket & Policies for Chat Attachments
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('chat-attachments', 'chat-attachments', true)
+ON CONFLICT (id) DO NOTHING;
+
+DROP POLICY IF EXISTS "Allow upload attachments for authenticated users" ON storage.objects;
+DROP POLICY IF EXISTS "Allow read attachments for everyone" ON storage.objects;
+
+CREATE POLICY "Allow upload attachments for authenticated users"
+ON storage.objects FOR INSERT TO authenticated
+WITH CHECK (bucket_id = 'chat-attachments');
+
+CREATE POLICY "Allow read attachments for everyone"
+ON storage.objects FOR SELECT TO authenticated, anon
+USING (bucket_id = 'chat-attachments');

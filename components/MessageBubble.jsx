@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, memo } from 'react';
 import Image from 'next/image';
 import { FileText, Download, ExternalLink, Play, Pause, Reply, CornerDownRight, Smile, Pencil, Trash2, Pin, Check, X, Flame, MapPin, Copy } from 'lucide-react';
 
@@ -51,7 +51,7 @@ function parseMessageContent(rawContent) {
 
 const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
 
-export default function MessageBubble({
+function MessageBubble({
   message,
   isSelf,
   senderName,
@@ -63,9 +63,10 @@ export default function MessageBubble({
   onDeleteMessage,
   onPinMessage,
   onImageClick,
-  onSelfDestruct
+  onSelfDestruct,
+  currentlyPlayingAudioId = null,
+  onPlayAudio = null,
 }) {
-  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [audioProgress, setAudioProgress] = useState(0);
   const [showReactionPicker, setShowReactionPicker] = useState(false);
   const [copiedText, setCopiedText] = useState(false);
@@ -78,6 +79,18 @@ export default function MessageBubble({
   const [editText, setEditText] = useState('');
 
   const audioRef = useRef(null);
+
+  const isPlayingAudio = currentlyPlayingAudioId === message.id;
+
+  // Sync native audio element play/pause with coordinated audio id
+  useEffect(() => {
+    if (!audioRef.current) return;
+    if (isPlayingAudio) {
+      audioRef.current.play().catch((err) => console.error('Audio play error:', err));
+    } else {
+      audioRef.current.pause();
+    }
+  }, [isPlayingAudio]);
 
   // Countdown timer effect for self-destructing messages
   useEffect(() => {
@@ -117,11 +130,11 @@ export default function MessageBubble({
   const toggleAudio = () => {
     if (!audioRef.current) return;
     if (isPlayingAudio) {
-      audioRef.current.pause();
-      setIsPlayingAudio(false);
+      if (onPlayAudio) onPlayAudio(null);
+      else audioRef.current.pause();
     } else {
-      audioRef.current.play();
-      setIsPlayingAudio(true);
+      if (onPlayAudio) onPlayAudio(message.id);
+      else audioRef.current.play().catch((err) => console.error('Audio play error:', err));
     }
   };
 
@@ -133,8 +146,10 @@ export default function MessageBubble({
   };
 
   const handleAudioEnded = () => {
-    setIsPlayingAudio(false);
     setAudioProgress(0);
+    if (onPlayAudio && currentlyPlayingAudioId === message.id) {
+      onPlayAudio(null);
+    }
   };
 
   const handleStartEdit = () => {
@@ -456,9 +471,9 @@ export default function MessageBubble({
           {isSelf && (
             <span
               className={message.is_read ? 'text-violet-300 font-bold' : 'text-white/40'}
-              title={message.is_read ? 'Dibaca' : 'Terkirim'}
+              title={message.is_sending ? 'Mengirim...' : message.is_read ? 'Dibaca' : 'Terkirim'}
             >
-              {message.is_read ? '✓✓' : '✓'}
+              {message.is_sending ? '🕒' : message.is_read ? '✓✓' : '✓'}
             </span>
           )}
         </div>
@@ -497,3 +512,5 @@ export default function MessageBubble({
     </div>
   );
 }
+
+export default memo(MessageBubble);
