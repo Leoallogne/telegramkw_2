@@ -22,6 +22,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
   const { 
     callState, 
     callStateRef, 
+    callDuration,
     callTimeoutRef, 
     callCleanupLockRef,
     iceCandidatesQueueRef,
@@ -30,6 +31,9 @@ export default function ChatWindow({ currentUser, onLogout }) {
     remoteStreamRef,
     updateCallState,
     clearCallTimers,
+    startDurationTimer,
+    stopDurationTimer,
+    formatCallDuration,
     cleanupCall,
     setCallTimeout,
   } = callStateHook;
@@ -560,18 +564,21 @@ export default function ChatWindow({ currentUser, onLogout }) {
     };
   }, [currentUser, playNotificationChime, notifyPush, notifySound, requestNotificationPermission, showWebNotification]);
 
-  // Bind WebRTC streams to DOM video/audio elements
+  // Bind WebRTC streams to DOM video/audio elements with autoplay resilience
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (callState) {
       if (localVideoRef.current && localStreamRef.current) {
         localVideoRef.current.srcObject = localStreamRef.current;
+        localVideoRef.current.play().catch(() => {});
       }
       if (remoteVideoRef.current && remoteStreamRef.current) {
         remoteVideoRef.current.srcObject = remoteStreamRef.current;
+        remoteVideoRef.current.play().catch(() => {});
       }
       if (remoteAudioRef.current && remoteStreamRef.current) {
         remoteAudioRef.current.srcObject = remoteStreamRef.current;
+        remoteAudioRef.current.play().catch(() => {});
       }
     }
   }, [callState]);
@@ -582,13 +589,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
     const callChannel = supabase.channel('call-signaling-room');
 
-    callChannel.subscribe((status) => {
-      setRealtimeStatus((prev) => ({
-        ...prev,
-        calls: status === 'SUBSCRIBED' ? 'online' : status === 'CHANNEL_ERROR' ? 'error' : 'connecting',
-      }));
-    });
-    
     callChannel
       .on('broadcast', { event: 'call-offer' }, async ({ payload }) => {
         if (payload.targetId === currentUser.id) {
@@ -623,6 +623,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
               status: 'connected',
               error: null,
             }));
+            startDurationTimer();
 
             while (iceCandidatesQueueRef.current.length > 0) {
               const cand = iceCandidatesQueueRef.current.shift();
@@ -658,7 +659,12 @@ export default function ChatWindow({ currentUser, onLogout }) {
           cleanupCall();
         }
       })
-      .subscribe();
+      .subscribe((status) => {
+        setRealtimeStatus((prev) => ({
+          ...prev,
+          calls: status === 'SUBSCRIBED' ? 'online' : status === 'CHANNEL_ERROR' ? 'error' : 'connecting',
+        }));
+      });
 
     callChannelRef.current = callChannel;
 
@@ -746,6 +752,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
 
       callTimeoutRef.current = setTimeout(() => {
         if (callStateRef.current?.status === 'connecting' || callStateRef.current?.status === 'ringing') {
+          void insertCallLogMessage(selectedContact.id, isVideo, 'missed');
           cleanupCall();
           alert('Panggilan tidak terhubung dalam waktu yang ditentukan.');
         }
@@ -807,8 +814,10 @@ export default function ChatWindow({ currentUser, onLogout }) {
         const state = pc.connectionState;
         if (state === 'connected') {
           updateCallState((prev) => ({ ...prev, status: 'connected', isConnected: true, error: null }));
+          startDurationTimer();
         } else if (state === 'failed' || state === 'disconnected') {
           updateCallState((prev) => ({ ...prev, status: 'reconnecting', error: 'Koneksi panggilan terputus, mencoba menyambung ulang...' }));
+          stopDurationTimer();
         }
       };
 
@@ -816,8 +825,10 @@ export default function ChatWindow({ currentUser, onLogout }) {
         const state = pc.iceConnectionState;
         if (state === 'connected') {
           updateCallState((prev) => ({ ...prev, status: 'connected', isConnected: true, error: null }));
+          startDurationTimer();
         } else if (state === 'failed' || state === 'closed') {
           updateCallState((prev) => ({ ...prev, status: 'error', error: 'Koneksi ICE gagal. Silakan coba lagi.' }));
+          stopDurationTimer();
         }
       };
 
@@ -869,24 +880,64 @@ export default function ChatWindow({ currentUser, onLogout }) {
     }
   };
 
+  // Insert system call log message into chat history
+  const insertCallLogMessage = async (targetId, isVideo, status, duration = 0) => {
+    if (!targetId || !currentUser) return;
+    try {
+      let content = '';
+      if (status === 'ended') {
+        content = `[call:ended|${isVideo ? 'video' : 'voice'}|${duration}]`;
+      } else if (status === 'declined') {
+        content = `[call:declined|${isVideo ? 'video' : 'voice'}]`;
+      } else if (status === 'missed') {
+        content = `[call:missed|${isVideo ? 'video' : 'voice'}]`;
+      }
+
+      await supabase.from('messages').insert({
+        sender_id: currentUser.id,
+        receiver_id: targetId,
+        content,
+        is_read: false,
+      });
+    } catch (e) {
+      console.warn('Could not insert call log:', e);
+    }
+  };
+
   const declineCall = () => {
     if (callState && callChannelRef.current) {
+      const targetId = callState.targetId;
+      const isVideo = callState.isVideo;
+
       callChannelRef.current.send({
         type: 'broadcast',
         event: 'call-decline',
-        payload: { callerId: currentUser.id, targetId: callState.targetId }
+        payload: { callerId: currentUser.id, targetId }
       });
+
+      void insertCallLogMessage(targetId, isVideo, 'declined');
     }
     cleanupCall();
   };
 
   const endCall = () => {
     if (callState && callChannelRef.current) {
+      const targetId = callState.targetId;
+      const isVideo = callState.isVideo;
+      const duration = callDuration;
+      const wasConnected = callState.isConnected;
+
       callChannelRef.current.send({
         type: 'broadcast',
         event: 'call-end',
-        payload: { callerId: currentUser.id, targetId: callState.targetId }
+        payload: { callerId: currentUser.id, targetId, duration, wasConnected }
       });
+
+      if (wasConnected) {
+        void insertCallLogMessage(targetId, isVideo, 'ended', duration);
+      } else {
+        void insertCallLogMessage(targetId, isVideo, 'missed');
+      }
     }
     cleanupCall();
   };
@@ -896,7 +947,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
       const audioTrack = localStreamRef.current.getAudioTracks()[0];
       if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled;
-        setCallState((prev) => ({ ...prev, isMuted: !audioTrack.enabled }));
+        updateCallState((prev) => ({ ...prev, isMuted: !audioTrack.enabled }));
       }
     }
   };
@@ -906,7 +957,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
       const videoTrack = localStreamRef.current.getVideoTracks()[0];
       if (videoTrack) {
         videoTrack.enabled = !videoTrack.enabled;
-        setCallState((prev) => ({ ...prev, isCameraOff: !videoTrack.enabled }));
+        updateCallState((prev) => ({ ...prev, isCameraOff: !videoTrack.enabled }));
       }
     }
   };
@@ -1144,11 +1195,15 @@ export default function ChatWindow({ currentUser, onLogout }) {
           } else if (payload.eventType === 'DELETE') {
             const oldR = payload.old;
             setReactionsMap((prev) => {
-              const list = prev[oldR.message_id] || [];
-              return {
-                ...prev,
-                [oldR.message_id]: list.filter((item) => item.id !== oldR.id)
-              };
+              const copy = { ...prev };
+              if (oldR.message_id && copy[oldR.message_id]) {
+                copy[oldR.message_id] = copy[oldR.message_id].filter((item) => item.id !== oldR.id);
+              } else {
+                for (const msgId of Object.keys(copy)) {
+                  copy[msgId] = copy[msgId].filter((item) => item.id !== oldR.id);
+                }
+              }
+              return copy;
             });
           }
         }
@@ -1515,7 +1570,8 @@ export default function ChatWindow({ currentUser, onLogout }) {
           show_read_receipts: showReadReceipts,
           show_online_status: showOnlineStatus
         })
-        .eq('id', currentUser.id);
+        .eq('id', currentUser.id)
+        .select();
 
       if (error) throw error;
 
@@ -1533,21 +1589,6 @@ export default function ChatWindow({ currentUser, onLogout }) {
       if (notifyPush && typeof window !== 'undefined' && 'Notification' in window) {
         await requestNotificationPermission();
       }
-
-      const { error: profileSyncErr } = await supabase
-        .from('profiles')
-        .update({
-          username: cleanUsername,
-          status_bio: editBio.trim(),
-          notify_sound: notifySound,
-          notify_push: notifyPush,
-          show_read_receipts: showReadReceipts,
-          show_online_status: showOnlineStatus,
-        })
-        .eq('id', currentUser.id)
-        .select();
-
-      if (profileSyncErr) throw profileSyncErr;
 
       setSettingsSuccess(true);
       setTimeout(() => setSettingsSuccess(false), 3000);
@@ -1689,14 +1730,19 @@ export default function ChatWindow({ currentUser, onLogout }) {
                 <span className="animate-ping absolute inset-0 rounded-3xl bg-violet-500/20" />
               </div>
               <h3 className="text-xl font-bold text-slate-100">{callState.targetName}</h3>
-              <p className="mt-1 text-xs font-mono font-semibold text-violet-400">
-                {callState.isIncoming
-                  ? (callState.isVideo ? 'Panggilan Video Masuk...' : 'Panggilan Suara Masuk...')
-                  : callState.isConnected
-                  ? (callState.isVideo ? 'Video Call Aktif' : 'Voice Call Aktif')
-                  : 'Memanggil...'
-                }
-              </p>
+              <div className="mt-1 flex items-center justify-center gap-1.5 text-xs font-mono font-semibold text-violet-400">
+                {callState.isIncoming ? (
+                  <span>{callState.isVideo ? 'Panggilan Video Masuk...' : 'Panggilan Suara Masuk...'}</span>
+                ) : callState.isConnected ? (
+                  <span className="flex items-center gap-1.5 text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20 shadow-sm">
+                    <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span>{callState.isVideo ? 'Video Call' : 'Voice Call'}</span>
+                    <span className="font-bold font-mono">({formatCallDuration(callDuration)})</span>
+                  </span>
+                ) : (
+                  <span className="animate-pulse">Memanggil...</span>
+                )}
+              </div>
             </div>
 
             {callState.isVideo && (
@@ -1705,6 +1751,7 @@ export default function ChatWindow({ currentUser, onLogout }) {
                   ref={remoteVideoRef}
                   autoPlay
                   playsInline
+                  muted
                   className="h-full w-full object-cover"
                 />
                 <video

@@ -56,7 +56,8 @@ export function useNotification() {
         await registration.showNotification(title, {
           body,
           tag,
-          badge: '/sw.js',
+          badge: '/favicon.ico',
+          icon: '/favicon.ico',
           requireInteraction: false,
         });
         return true;
@@ -69,23 +70,71 @@ export function useNotification() {
   }, []);
 
   /**
+   * Synthesize chime sound using Web Audio API.
+   * Bebas dependensi file fisik dan bebas error 404.
+   */
+  const playSynthesizedChime = () => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return false;
+      const ctx = new AudioCtx();
+
+      const now = ctx.currentTime;
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(587.33, now);
+
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(880, now + 0.1);
+
+      gain.gain.setValueAtTime(0.18, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+
+      osc1.connect(gain);
+      osc2.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc1.start(now);
+      osc1.stop(now + 0.12);
+      osc2.start(now + 0.1);
+      osc2.stop(now + 0.45);
+
+      setTimeout(() => {
+        try { ctx.close(); } catch {}
+      }, 600);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  /**
    * Play notification chime sound dengan cooldown.
    * Mencegah notification sound spam.
    */
-  const playNotificationChime = useCallback((soundFile = '/notification.mp3') => {
+  const playNotificationChime = useCallback((soundFile = null) => {
     const now = Date.now();
     const lastTone = lastToneAtRef.current;
 
     // Hanya mainkan tone jika 1 detik sudah berlalu sejak tone terakhir
     if (now - lastTone >= 1000) {
       lastToneAtRef.current = now;
-      try {
-        const audio = new Audio(soundFile);
-        audio.play().catch((err) => console.error('Audio play failed:', err));
-      } catch (err) {
-        console.error('Error creating audio element:', err);
+
+      if (soundFile) {
+        try {
+          const audio = new Audio(soundFile);
+          audio.play().catch(() => playSynthesizedChime());
+          return true;
+        } catch {
+          // fallback
+        }
       }
-      return true;
+
+      return playSynthesizedChime();
     }
 
     return false;

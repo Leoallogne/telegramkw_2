@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect, memo } from 'react';
 import Image from 'next/image';
-import { FileText, Download, ExternalLink, Play, Pause, Reply, CornerDownRight, Smile, Pencil, Trash2, Pin, Check, X, Flame, MapPin, Copy } from 'lucide-react';
+import { FileText, Download, ExternalLink, Play, Pause, Reply, CornerDownRight, Smile, Pencil, Trash2, Pin, Check, X, Flame, MapPin, Copy, Phone, Video, PhoneOff, PhoneCall, VideoOff } from 'lucide-react';
 
 function sanitizeForDisplay(str) {
   if (typeof str !== 'string') return '';
@@ -14,13 +14,24 @@ function sanitizeForDisplay(str) {
 }
 
 function parseMessageContent(rawContent) {
-  if (typeof rawContent !== 'string') return { text: '', image: null, file: null, audio: null, location: null };
+  if (typeof rawContent !== 'string') return { text: '', image: null, file: null, audio: null, location: null, callLog: null };
 
   let text = rawContent;
   let image = null;
   let file = null;
   let audio = null;
   let location = null;
+  let callLog = null;
+
+  const callMatch = text.match(/\[call:(ended|declined|missed)\|(video|voice)(?:\|(\d+))?\]/);
+  if (callMatch) {
+    callLog = {
+      status: callMatch[1],
+      type: callMatch[2],
+      duration: callMatch[3] ? parseInt(callMatch[3], 10) : 0,
+    };
+    text = text.replace(callMatch[0], '').trim();
+  }
 
   const locationMatch = text.match(/\[location:([^,]+),([^|]+)\|([^\]]+)\]/);
   if (locationMatch) {
@@ -46,7 +57,7 @@ function parseMessageContent(rawContent) {
     text = text.replace(fileMatch[0], '').trim();
   }
 
-  return { text: sanitizeForDisplay(text), image, file, audio, location };
+  return { text: sanitizeForDisplay(text), image, file, audio, location, callLog };
 }
 
 const REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
@@ -113,7 +124,7 @@ function MessageBubble({
 
   if (!message) return null;
 
-  const { text, image, file, audio, location } = parseMessageContent(message.content || '');
+  const { text, image, file, audio, location, callLog } = parseMessageContent(message.content || '');
   const safeSenderName = sanitizeForDisplay(senderName || 'Anonymous').slice(0, 50);
 
   const formatTime = (isoString) => {
@@ -313,6 +324,37 @@ function MessageBubble({
             <div className="overflow-hidden">
               <span className="font-bold text-violet-300 block text-[11px] mb-0.5">{quotedMessage.senderName}</span>
               <p className="truncate text-slate-300 text-xs italic">{quotedMessage.content}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Call Log Status Card */}
+        {callLog && (
+          <div className="mb-2.5 flex items-center gap-3 rounded-xl border border-white/10 bg-slate-950/60 p-3 min-w-[210px] shadow-sm">
+            <div
+              className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+                callLog.status === 'ended'
+                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                  : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+              }`}
+            >
+              {callLog.type === 'video' ? (
+                callLog.status === 'ended' ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />
+              ) : (
+                callLog.status === 'ended' ? <PhoneCall className="h-5 w-5" /> : <PhoneOff className="h-5 w-5" />
+              )}
+            </div>
+            <div className="overflow-hidden">
+              <span className="font-bold text-xs block text-slate-200">
+                {callLog.status === 'ended'
+                  ? callLog.type === 'video' ? 'Panggilan Video Selesai' : 'Panggilan Suara Selesai'
+                  : callLog.status === 'declined' ? 'Panggilan Ditolak' : 'Panggilan Tak Terjawab'}
+              </span>
+              <span className="text-[10px] font-mono text-slate-400 block mt-0.5">
+                {callLog.status === 'ended' && callLog.duration > 0
+                  ? `Durasi: ${Math.floor(callLog.duration / 60).toString().padStart(2, '0')}:${(callLog.duration % 60).toString().padStart(2, '0')}`
+                  : callLog.type === 'video' ? 'Video call' : 'Voice call'}
+              </span>
             </div>
           </div>
         )}

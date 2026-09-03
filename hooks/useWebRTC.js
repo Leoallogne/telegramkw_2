@@ -10,10 +10,12 @@ export function useWebRTC() {
    * STUN servers untuk NAT traversal, TURN untuk fallback.
    */
   const getRtcConfig = useCallback(() => {
-    // Google STUN servers (public, reliable)
+    // Google & Mozilla public STUN servers
     const stunServers = [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
+      { urls: 'stun:stun.services.mozilla.com' },
     ];
 
     // TURN servers dari environment (optional, untuk enterprise)

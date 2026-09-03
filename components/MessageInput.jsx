@@ -275,7 +275,7 @@ export default function MessageInput({ onSendMessage, onTypingChange, disabled, 
         resolve(file);
         return;
       }
-      const img = new Image();
+      const img = new window.Image();
       const url = URL.createObjectURL(file);
       img.onload = () => {
         URL.revokeObjectURL(url);

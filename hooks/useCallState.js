@@ -6,11 +6,13 @@ import { useCallback, useRef, useState } from 'react';
  */
 export function useCallState() {
   const [callState, setCallState] = useState(null);
+  const [callDuration, setCallDuration] = useState(0);
   
   // Refs untuk state machine dan lifecycle management
   const callStateRef = useRef(null);
   const callTimeoutRef = useRef(null);
   const callCleanupLockRef = useRef(false);
+  const callTimerIntervalRef = useRef(null);
   
   // ICE candidates queue
   const iceCandidatesQueueRef = useRef([]);
@@ -19,6 +21,38 @@ export function useCallState() {
   const localStreamRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const remoteStreamRef = useRef(null);
+
+  /**
+   * Format durasi detik ke MM:SS
+   */
+  const formatCallDuration = useCallback((totalSeconds) => {
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  }, []);
+
+  /**
+   * Mulai timer durasi panggilan saat panggilan tersambung
+   */
+  const startDurationTimer = useCallback(() => {
+    if (callTimerIntervalRef.current) {
+      clearInterval(callTimerIntervalRef.current);
+    }
+    setCallDuration(0);
+    callTimerIntervalRef.current = setInterval(() => {
+      setCallDuration((prev) => prev + 1);
+    }, 1000);
+  }, []);
+
+  /**
+   * Stop timer durasi panggilan
+   */
+  const stopDurationTimer = useCallback(() => {
+    if (callTimerIntervalRef.current) {
+      clearInterval(callTimerIntervalRef.current);
+      callTimerIntervalRef.current = null;
+    }
+  }, []);
 
   /**
    * Update state dengan thread-safe approach.
@@ -40,7 +74,8 @@ export function useCallState() {
       clearTimeout(callTimeoutRef.current);
       callTimeoutRef.current = null;
     }
-  }, []);
+    stopDurationTimer();
+  }, [stopDurationTimer]);
 
   /**
    * Cleanup call dengan resource management yang proper.
@@ -51,6 +86,7 @@ export function useCallState() {
     callCleanupLockRef.current = true;
 
     clearCallTimers();
+    setCallDuration(0);
 
     // Stop semua media tracks
     if (localStreamRef.current) {
@@ -88,6 +124,7 @@ export function useCallState() {
     // State
     callState,
     callStateRef,
+    callDuration,
     callTimeoutRef,
     callCleanupLockRef,
     iceCandidatesQueueRef,
@@ -99,6 +136,9 @@ export function useCallState() {
     setCallState,
     updateCallState,
     clearCallTimers,
+    startDurationTimer,
+    stopDurationTimer,
+    formatCallDuration,
     cleanupCall,
     setCallTimeout,
   };

@@ -16,8 +16,15 @@ export default function GuestLoginForm({ onLoginSuccess }) {
   // Guest Sign In
   const handleGuestLogin = async (e) => {
     e.preventDefault();
-    if (!username.trim() || !password.trim()) {
+    const cleanUsername = username.trim();
+    const sanitizedName = cleanUsername.toLowerCase().replace(/[^a-z0-9_]/g, '');
+
+    if (!cleanUsername || !password.trim()) {
       setError('Username dan Password harus diisi');
+      return;
+    }
+    if (sanitizedName.length < 3) {
+      setError('Username harus mengandung minimal 3 karakter huruf atau angka');
       return;
     }
     setLoading(true);
@@ -25,7 +32,7 @@ export default function GuestLoginForm({ onLoginSuccess }) {
 
     try {
       const { data, error: authError } = await supabase.auth.signInWithPassword({
-        email: guestEmail(username.trim()),
+        email: guestEmail(cleanUsername),
         password: password,
       });
 
@@ -46,8 +53,15 @@ export default function GuestLoginForm({ onLoginSuccess }) {
   // Guest Register
   const handleGuestRegister = async (e) => {
     e.preventDefault();
-    if (!username.trim() || !password.trim()) {
+    const cleanUsername = username.trim();
+    const sanitizedName = cleanUsername.toLowerCase().replace(/[^a-z0-9_]/g, '');
+
+    if (!cleanUsername || !password.trim()) {
       setError('Username dan Password harus diisi');
+      return;
+    }
+    if (sanitizedName.length < 3) {
+      setError('Username harus mengandung minimal 3 karakter huruf atau angka');
       return;
     }
     if (password.length < 6) {
@@ -58,7 +72,6 @@ export default function GuestLoginForm({ onLoginSuccess }) {
     setError('');
 
     try {
-      const cleanUsername = username.trim();
       const { data, error: authError } = await supabase.auth.signUp({
         email: guestEmail(cleanUsername),
         password: password,

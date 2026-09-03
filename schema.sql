@@ -5,6 +5,8 @@
 -- It only creates missing tables/indexes, repairs permissions, and keeps data intact.
 -- =========================================================
 
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
 -- 1. Drop legacy triggers on auth.users if they exist to avoid conflicts.
 DO $$
 DECLARE
@@ -90,6 +92,10 @@ CREATE TABLE IF NOT EXISTS public.message_reactions (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
     UNIQUE(message_id, user_id, emoji)
 );
+
+-- Realtime full replica identity to ensure DELETE payload delivers complete row context
+ALTER TABLE public.message_reactions REPLICA IDENTITY FULL;
+ALTER TABLE public.messages REPLICA IDENTITY FULL;
 
 -- 4. Index only when needed.
 CREATE INDEX IF NOT EXISTS idx_messages_sender_receiver ON public.messages(sender_id, receiver_id);
@@ -187,6 +193,35 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+CREATE OR REPLACE FUNCTION public.is_group_member(_group_id UUID, _user_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.group_members
+    WHERE group_id = _group_id AND user_id = _user_id
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_group_admin(_group_id UUID, _user_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.group_members
+    WHERE group_id = _group_id AND user_id = _user_id AND role = 'admin'
+  );
+$$;
+
+GRANT EXECUTE ON FUNCTION public.is_group_member(UUID, UUID) TO authenticated, anon;
+GRANT EXECUTE ON FUNCTION public.is_group_admin(UUID, UUID) TO authenticated, anon;
+
 -- 8. Policies: safe idempotent creation.
 DROP POLICY IF EXISTS "Allow read profiles for authenticated users" ON public.profiles;
 DROP POLICY IF EXISTS "Allow insert own profile" ON public.profiles;
@@ -200,11 +235,14 @@ DROP POLICY IF EXISTS "Allow delete own groups" ON public.groups;
 
 DROP POLICY IF EXISTS "Allow read group memberships" ON public.group_members;
 DROP POLICY IF EXISTS "Allow insert own group memberships" ON public.group_members;
+DROP POLICY IF EXISTS "Allow insert group memberships" ON public.group_members;
 DROP POLICY IF EXISTS "Allow update own group membership" ON public.group_members;
+DROP POLICY IF EXISTS "Allow delete own group membership" ON public.group_members;
 
 DROP POLICY IF EXISTS "Allow read own friendships" ON public.friendships;
 DROP POLICY IF EXISTS "Allow insert own friendships" ON public.friendships;
 DROP POLICY IF EXISTS "Allow update own friendships" ON public.friendships;
+DROP POLICY IF EXISTS "Allow delete own friendships" ON public.friendships;
 
 DROP POLICY IF EXISTS "Allow read own messages" ON public.messages;
 DROP POLICY IF EXISTS "Allow insert own messages" ON public.messages;
@@ -266,29 +304,54 @@ CREATE POLICY "Allow delete own groups"
 CREATE POLICY "Allow read group memberships"
     ON public.group_members
     FOR SELECT
-    USING (auth.uid() = user_id OR EXISTS (
-      SELECT 1
-      FROM public.group_members gm_admin
-      WHERE gm_admin.group_id = public.group_members.group_id
-        AND gm_admin.user_id = auth.uid()
-        AND gm_admin.role = 'admin'
-    ));
+    USING (
+      auth.uid() = user_id 
+      OR EXISTS (
+        SELECT 1 FROM public.groups g
+        WHERE g.id = public.group_members.group_id
+          AND g.created_by = auth.uid()
+      )
+      OR public.is_group_member(public.group_members.group_id, auth.uid())
+    );
 
-CREATE POLICY "Allow insert own group memberships"
+CREATE POLICY "Allow insert group memberships"
     ON public.group_members
     FOR INSERT
-    WITH CHECK (auth.uid() = user_id);
+    WITH CHECK (
+      auth.uid() = user_id
+      OR EXISTS (
+        SELECT 1 FROM public.groups g
+        WHERE g.id = public.group_members.group_id
+          AND g.created_by = auth.uid()
+      )
+      OR public.is_group_admin(public.group_members.group_id, auth.uid())
+    );
 
 CREATE POLICY "Allow update own group membership"
     ON public.group_members
     FOR UPDATE
-    USING (auth.uid() = user_id OR EXISTS (
-      SELECT 1
-      FROM public.group_members gm_admin
-      WHERE gm_admin.group_id = public.group_members.group_id
-        AND gm_admin.user_id = auth.uid()
-        AND gm_admin.role = 'admin'
-    ));
+    USING (
+      auth.uid() = user_id 
+      OR EXISTS (
+        SELECT 1 FROM public.groups g
+        WHERE g.id = public.group_members.group_id
+          AND g.created_by = auth.uid()
+      )
+      OR public.is_group_admin(public.group_members.group_id, auth.uid())
+    );
+
+CREATE POLICY "Allow delete own group membership"
+    ON public.group_members
+    FOR DELETE
+    USING (
+      auth.uid() = user_id
+      OR EXISTS (
+        SELECT 1 FROM public.groups g
+        WHERE g.id = public.group_members.group_id
+          AND g.created_by = auth.uid()
+      )
+      OR public.is_group_admin(public.group_members.group_id, auth.uid())
+    );
 
 CREATE POLICY "Allow read own friendships"
     ON public.friendships
@@ -305,6 +368,11 @@ CREATE POLICY "Allow update own friendships"
     FOR UPDATE
     USING (auth.uid() = user_id OR auth.uid() = friend_id);
 
+CREATE POLICY "Allow delete own friendships"
+    ON public.friendships
+    FOR DELETE
+    USING (auth.uid() = user_id OR auth.uid() = friend_id);
+
 CREATE POLICY "Allow read own messages"
     ON public.messages
     FOR SELECT
@@ -313,11 +381,7 @@ CREATE POLICY "Allow read own messages"
       OR auth.uid() = receiver_id
       OR (
         group_id IS NOT NULL 
-        AND EXISTS (
-          SELECT 1 FROM public.group_members 
-          WHERE group_members.group_id = public.messages.group_id 
-            AND group_members.user_id = auth.uid()
-        )
+        AND public.is_group_member(public.messages.group_id, auth.uid())
       )
     );
 
@@ -328,11 +392,7 @@ CREATE POLICY "Allow insert own messages"
       auth.uid() = sender_id
       AND (
         group_id IS NULL
-        OR EXISTS (
-          SELECT 1 FROM public.group_members
-          WHERE group_members.group_id = public.messages.group_id
-            AND group_members.user_id = auth.uid()
-        )
+        OR public.is_group_member(public.messages.group_id, auth.uid())
       )
     );
 
@@ -353,11 +413,7 @@ CREATE POLICY "Allow update group messages"
     FOR UPDATE
     USING (
       group_id IS NOT NULL 
-      AND EXISTS (
-        SELECT 1 FROM public.group_members 
-        WHERE group_members.group_id = public.messages.group_id 
-          AND group_members.user_id = auth.uid()
-      )
+      AND public.is_group_member(public.messages.group_id, auth.uid())
     );
 
 CREATE POLICY "Allow delete own messages"
@@ -368,11 +424,7 @@ CREATE POLICY "Allow delete own messages"
       OR auth.uid() = receiver_id
       OR (
         group_id IS NOT NULL 
-        AND EXISTS (
-          SELECT 1 FROM public.group_members 
-          WHERE group_members.group_id = public.messages.group_id 
-            AND group_members.user_id = auth.uid()
-        )
+        AND public.is_group_member(public.messages.group_id, auth.uid())
       )
     );
 
